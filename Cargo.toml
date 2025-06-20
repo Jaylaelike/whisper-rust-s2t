@@ -1,0 +1,27 @@
+[package]
+name = "thai-transcriber"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+
+whisper-rs = { version = "0.10.0", features = ["metal"] }
+whisper-rs-sys = { version = "0.8.0", features = ["metal"] }
+
+hound = { version = "3.5", optional = true }
+symphonia = { version = "0.5", optional = true }
+tokio = { version = "1.0", features = ["full"] }
+futures-util = "0.3"
+rodio = "0.20"
+chrono = { version = "0.4", features = ["serde"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+[features]
+default = ["wav-support"]
+wav-support = ["hound"]
+full-audio-support = ["symphonia"]
+
+[[bin]]
+name = "transcribe"
+path = "src/main.rs"

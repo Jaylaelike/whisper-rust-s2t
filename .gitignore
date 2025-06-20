@@ -1,0 +1,9 @@
+# all file of ./audio and ./target directories
+audio/*
+target/*
+model/*
+
+ggml-metal.metal
+
+
+.DS_Store
