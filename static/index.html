@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ThaiPBS Transcription API</title>
+    <title>ThaiPBS Transcription API with Queue System</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -21,30 +21,228 @@
             color: white;
             border-radius: 10px;
         }
-        .risk-warning {
+        .queue-status {
+            background: #e9ecef;
+            border: 1px solid #ced4da;
+            border-radius: 8px;
+            padding: 15px;
+            margin: 20px 0;
+        }
+        .queue-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .stat-card {
+            background: white;
+            padding: 10px;
+            border-radius: 5px;
+            text-align: center;
+            border: 1px solid #dee2e6;
+        }
+        .stat-number {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .stat-label {
+            font-size: 12px;
+            color: #6c757d;
+            text-transform: uppercase;
+        }
+        .task-progress {
             background: #fff3cd;
             border: 1px solid #ffeaa7;
             color: #856404;
             padding: 10px;
             border-radius: 5px;
             margin: 10px 0;
+        }
+        .progress-bar {
+            width: 100%;
+            height: 20px;
+            background: #e9ecef;
+            border-radius: 10px;
+            overflow: hidden;
+            margin: 10px 0;
+        }
+        .progress-fill {
+            height: 100%;
+            background: linear-gradient(45deg, #007bff, #28a745);
+            transition: width 0.3s ease;
+        }
+        .websocket-status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .ws-connected {
+            background: #d4edda;
+            color: #155724;
+        }
+        .ws-disconnected {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .task-history {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 20px 0;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .task-item {
+            background: white;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 5px;
+            border-left: 4px solid #6c757d;
+        }
+        .task-item.pending {
+            border-left-color: #ffc107;
+        }
+        .task-item.processing {
+            border-left-color: #007bff;
+        }
+        .task-item.completed {
+            border-left-color: #28a745;
+        }
+        .task-item.failed {
+            border-left-color: #dc3545;
+        }
+        .real-time-updates {
+            background: #d1ecf1;
+            border: 1px solid #bee5eb;
+            border-radius: 5px;
+            padding: 10px;
+            margin: 10px 0;
+            max-height: 200px;
+            overflow-y: auto;
+            font-family: monospace;
             font-size: 12px;
         }
-        .risk-result {
-            padding: 10px;
+        .result-container {
+            background: white;
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            margin: 15px 0;
+            overflow: hidden;
+        }
+        .result-header {
+            background: #f8f9fa;
+            padding: 15px;
+            border-bottom: 1px solid #dee2e6;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .result-content {
+            padding: 20px;
+        }
+        .transcription-text {
+            background: #e3f2fd;
+            border: 1px solid #bbdefb;
             border-radius: 5px;
+            padding: 15px;
             margin: 10px 0;
+            font-size: 16px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+        }
+        .segments-container {
+            margin: 15px 0;
+        }
+        .segment-item {
+            background: #f8f9fa;
+            border-left: 4px solid #007bff;
+            padding: 10px 15px;
+            margin: 5px 0;
+            border-radius: 0 5px 5px 0;
+        }
+        .segment-text {
+            font-weight: 500;
+            margin: 5px 0;
+        }
+        .segment-meta {
+            font-size: 12px;
+            color: #6c757d;
+            display: flex;
+            gap: 15px;
+        }
+        .risk-analysis-container {
+            background: #fff8e1;
+            border: 1px solid #ffcc02;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .risk-status {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 20px;
             font-weight: bold;
+            font-size: 14px;
+            margin: 5px 0;
         }
         .risk-safe {
             background: #d4edda;
-            border: 1px solid #c3e6cb;
             color: #155724;
         }
         .risk-risky {
             background: #f8d7da;
-            border: 1px solid #f5c6cb;
             color: #721c24;
+        }
+        .metadata-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin: 15px 0;
+        }
+        .metadata-item {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+        }
+        .metadata-label {
+            font-size: 12px;
+            color: #6c757d;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .metadata-value {
+            font-size: 14px;
+            color: #333;
+            margin-top: 2px;
+        }
+        .json-toggle {
+            background: none;
+            border: 1px solid #007bff;
+            color: #007bff;
+            padding: 5px 10px;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        .json-toggle:hover {
+            background: #007bff;
+            color: white;
+        }
+        .json-raw {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 10px 0;
+            overflow-x: auto;
+            font-family: 'Monaco', 'Consolas', monospace;
+            font-size: 12px;
+            display: none;
         }
         .api-section {
             background: #f8f9fa;
@@ -160,52 +358,182 @@
 </head>
 <body>
     <div class="header">
+        <h1>🎤 ThaiPBS Transcription API with Queue System</h1>
+        <p>Upload audio files and get speech-to-text transcription results with real-time queue updates</p>
+        <div>
+            <span id="websocketStatus" class="websocket-status ws-disconnected">🔴 WebSocket Disconnected</span>
+        </div>
+    </div>
+
+    <div class="queue-status">
+        <h3>📊 Queue Status</h3>
+        <div class="queue-stats" id="queueStats">
+            <div class="stat-card">
+                <div class="stat-number" id="pendingCount">-</div>
+                <div class="stat-label">Pending</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="processingCount">-</div>
+                <div class="stat-label">Processing</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="completedCount">-</div>
+                <div class="stat-label">Completed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="failedCount">-</div>
+                <div class="stat-label">Failed</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number" id="totalTasks">-</div>
+                <div class="stat-label">Total Tasks</div>
+            </div>
+        </div>
+        
+        <div id="currentTask" class="task-progress" style="display: none;">
+            <h4 id="taskTitle">Current Task</h4>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill" style="width: 0%;"></div>
+            </div>
+            <div id="taskDetails">Processing...</div>
+        </div>
+        
+        <div class="real-time-updates">
+            <h4>📡 Real-time Updates</h4>
+            <div id="updateLog"></div>
+        </div>
+    </div>
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        #loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #007bff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
         <h1>🎤 ThaiPBS Transcription API</h1>
         <p>Upload audio files and get speech-to-text transcription results with optional risk analysis</p>
     </div>
 
     <div class="api-section">
-        <h2>📋 API Endpoints</h2>
+        <h2>📋 API Endpoints (Queue System)</h2>
         
         <div class="endpoint">
             <span class="method post">POST</span>
-            <strong>/transcribe</strong>
-            <p>Upload an audio file and get transcription results with optional risk analysis</p>
+            <strong>/api/transcribe</strong>
+            <p>Upload an audio file and queue it for transcription with optional risk analysis</p>
             <strong>Parameters:</strong>
             <ul>
                 <li><code>audio</code> - Audio file (multipart/form-data)</li>
                 <li><code>language</code> - Language code (query parameter, default: "th")</li>
-                <li><code>backend</code> - Processing backend: "cpu", "gpu", "coreml" (query parameter, default: "cpu")</li>
+                <li><code>backend</code> - Processing backend: "cpu", "gpu", "coreml", "auto" (query parameter, default: "auto")</li>
                 <li><code>chunking</code> - Enable chunking for long audio (query parameter, default: "true")</li>
                 <li><code>risk_analysis</code> - Enable content risk detection (query parameter, default: "false")</li>
+                <li><code>priority</code> - Queue priority (query parameter, higher = processed first)</li>
             </ul>
+            <strong>Response:</strong> Returns task ID for tracking progress
         </div>
 
         <div class="endpoint">
             <span class="method post">POST</span>
-            <strong>/risk-analysis</strong>
-            <p>Analyze text content for risk detection (gambling, illegal activities, etc.)</p>
+            <strong>/api/risk-analysis</strong>
+            <p>Queue text content for risk detection analysis</p>
             <strong>Body:</strong>
             <ul>
-                <li><code>{"text": "content to analyze"}</code> - JSON with text to analyze</li>
+                <li><code>{"text": "content to analyze", "priority": 1}</code> - JSON with text and optional priority</li>
+            </ul>
+            <strong>Response:</strong> Returns task ID for tracking progress
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <strong>/api/task/{id}/status</strong>
+            <p>Get the status and result of a queued task</p>
+            <strong>Response:</strong> Task status, progress, and result (if completed)
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <strong>/api/queue/stats</strong>
+            <p>Get current queue statistics</p>
+            <strong>Response:</strong> Pending, processing, completed, and failed task counts
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <strong>/api/queue/history</strong>
+            <p>Get task history with optional filtering</p>
+            <strong>Parameters:</strong>
+            <ul>
+                <li><code>limit</code> - Maximum number of tasks to return</li>
+                <li><code>status</code> - Filter by status: pending, processing, completed, failed</li>
             </ul>
         </div>
 
         <div class="endpoint">
             <span class="method get">GET</span>
-            <strong>/health</strong>
-            <p>Check API health status</p>
+            <strong>/api/health</strong>
+            <p>Check API health status with queue statistics</p>
         </div>
 
         <div class="endpoint">
             <span class="method get">GET</span>
-            <strong>/languages</strong>
+            <strong>/api/languages</strong>
             <p>Get list of supported languages</p>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <strong>/ws</strong>
+            <p>WebSocket endpoint for real-time queue updates and task progress</p>
+            <strong>Events:</strong> new_task, task_progress, task_completed, task_status_update
         </div>
     </div>
 
     <div class="upload-section">
-        <h2>🎵 Upload Audio File</h2>
+        <h2>🎵 Queue Audio for Transcription</h2>
         <form class="upload-form" id="uploadForm">
             <div class="form-group">
                 <label for="audioFile">Audio File:</label>
@@ -225,23 +553,37 @@
                     <option value="de">German (Deutsch)</option>
                     <option value="ru">Russian (Русский)</option>
                     <option value="ar">Arabic (العربية)</option>
+                    <option value="auto">Auto-detect</option>
                 </select>
             </div>
 
             <div class="form-group">
                 <label for="backend">Processing Backend:</label>
                 <select id="backend" name="backend">
-                    <option value="cpu">CPU Only (Recommended - Most Stable)</option>
+                    <option value="auto">Auto (Smart Selection)</option>
+                    <option value="cpu">CPU Only (Most Stable)</option>
                     <option value="gpu">GPU (Metal) - ⚠️ May cause buffer errors</option>
                     <option value="coreml">Core ML (Apple Neural Engine) - ⚠️ Experimental</option>
                 </select>
                 <small style="color: #666; font-size: 12px;">
-                    <strong>Important Notes:</strong><br>
+                    <strong>Backend Notes:</strong><br>
+                    • <strong>Auto mode</strong> intelligently selects the best available backend<br>
                     • <strong>CPU mode</strong> is most reliable and recommended for production use<br>
-                    • <strong>GPU/CoreML modes</strong> may show "buffer is nil" or "ggml_metal_free" messages in server logs<br>
-                    • <strong>"ggml_metal_free: deallocating"</strong> is NORMAL - it means Metal cleanup is working correctly<br>
-                    • If GPU fails, the system automatically falls back to CPU mode (this is expected behavior)<br>
-                    • Metal deallocation messages indicate proper resource cleanup, not errors
+                    • <strong>GPU/CoreML modes</strong> may show harmless "ggml_metal_free" messages in logs<br>
+                    • System automatically falls back to CPU if GPU/CoreML fails
+                </small>
+            </div>
+
+            <div class="form-group">
+                <label for="priority">Queue Priority:</label>
+                <select id="priority" name="priority">
+                    <option value="0">Normal Priority</option>
+                    <option value="1">High Priority</option>
+                    <option value="2">Very High Priority</option>
+                    <option value="-1">Low Priority</option>
+                </select>
+                <small style="color: #666; font-size: 12px;">
+                    Higher priority tasks are processed first. Use normal priority unless urgent.
                 </small>
             </div>
 
@@ -254,13 +596,13 @@
                 <div class="risk-warning">
                     <strong>⚠️ Risk Analysis Notice:</strong><br>
                     • Requires LlamaEdge server running on port 8080<br>
-                    • Analyzes transcribed text for gambling, illegal activities, and suspicious content<br>
-                    • Uses Thai language prompts for content analysis<br>
-                    • If LlamaEdge server is not available, this feature will be disabled
+                    • Analyzes transcribed text for harmful content<br>
+                    • Processing will continue even if risk analysis fails<br>
+                    • Check task status for risk analysis results
                 </div>
             </div>
 
-            <button type="submit">🚀 Transcribe Audio</button>
+            <button type="submit">� Add to Queue</button>
         </form>
 
         <div id="loading">
@@ -269,6 +611,14 @@
         </div>
 
         <div id="result"></div>
+    </div>
+
+    <div class="task-history">
+        <h3>📋 Recent Tasks</h3>
+        <div id="taskHistory">
+            <p>Loading task history...</p>
+        </div>
+        <button onclick="loadTaskHistory()" style="margin-top: 10px;">🔄 Refresh History</button>
     </div>
 
     <div class="upload-section">
@@ -291,39 +641,443 @@
     </div>
 
     <div class="api-section">
-        <h2>📝 Example cURL Commands</h2>
+        <h2>📝 Example cURL Commands (Queue System)</h2>
         
-        <h3>Basic Transcription (Thai):</h3>
-        <pre><code>curl -X POST "http://localhost:4000/transcribe?language=th&backend=cpu" \
+        <h3>Queue Audio Transcription (Thai):</h3>
+        <pre><code>curl -X POST "http://localhost:8000/api/transcribe?language=th&backend=auto&priority=1" \
   -F "audio=@your_audio.mp3"</code></pre>
 
-        <h3>Transcription with Risk Analysis:</h3>
-        <pre><code>curl -X POST "http://localhost:4000/transcribe?language=th&backend=cpu&risk_analysis=true" \
+        <h3>Queue Transcription with Risk Analysis:</h3>
+        <pre><code>curl -X POST "http://localhost:8000/api/transcribe?language=th&backend=auto&risk_analysis=true" \
   -F "audio=@your_audio.mp3"</code></pre>
 
-        <h3>English Transcription with GPU:</h3>
-        <pre><code>curl -X POST "http://localhost:4000/transcribe?language=en&backend=gpu" \
-  -F "audio=@english_audio.wav"</code></pre>
+        <h3>Check Task Status:</h3>
+        <pre><code># Replace TASK_ID with the ID returned from transcribe/risk-analysis
+curl "http://localhost:8000/api/task/TASK_ID/status"</code></pre>
 
-        <h3>Risk Analysis Only:</h3>
-        <pre><code>curl -X POST "http://localhost:4000/risk-analysis" \
+        <h3>Queue Risk Analysis:</h3>
+        <pre><code>curl -X POST "http://localhost:8000/api/risk-analysis" \
   -H "Content-Type: application/json" \
-  -d '{"text":"มาเล่นบาคาร่าออนไลน์กันเถอะ ได้เงินง่ายๆ"}'</code></pre>
+  -d '{"text":"มาเล่นบาคาร่าออนไลน์กันเถอะ ได้เงินง่ายๆ", "priority": 1}'</code></pre>
+
+        <h3>Get Queue Statistics:</h3>
+        <pre><code>curl "http://localhost:8000/api/queue/stats"</code></pre>
+
+        <h3>Get Task History:</h3>
+        <pre><code># Get last 10 completed tasks
+curl "http://localhost:8000/api/queue/history?limit=10&status=completed"</code></pre>
 
         <h3>Health Check:</h3>
-        <pre><code>curl http://localhost:4000/health</code></pre>
+        <pre><code>curl "http://localhost:8000/api/health"</code></pre>
 
         <h3>Get Supported Languages:</h3>
-        <pre><code>curl http://localhost:4000/languages</code></pre>
+        <pre><code>curl "http://localhost:8000/api/languages"</code></pre>
     </div>
 
     <script>
+        // Global variables
+        let currentTasks = new Map();
+        let websocket = null;
+        
+        // WebSocket connection
+        function connectWebSocket() {
+            const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+            
+            websocket = new WebSocket(wsUrl);
+            
+            websocket.onopen = function() {
+                console.log('WebSocket connected');
+                updateWebSocketStatus(true);
+            };
+            
+            websocket.onmessage = function(event) {
+                try {
+                    const data = JSON.parse(event.data);
+                    handleWebSocketMessage(data);
+                } catch (e) {
+                    console.error('Failed to parse WebSocket message:', e);
+                }
+            };
+            
+            websocket.onclose = function() {
+                console.log('WebSocket disconnected');
+                updateWebSocketStatus(false);
+                // Attempt to reconnect after 3 seconds
+                setTimeout(connectWebSocket, 3000);
+            };
+            
+            websocket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                updateWebSocketStatus(false);
+            };
+        }
+        
+        function updateWebSocketStatus(connected) {
+            const statusElement = document.getElementById('websocketStatus');
+            if (connected) {
+                statusElement.className = 'websocket-status ws-connected';
+                statusElement.textContent = '🟢 WebSocket Connected';
+            } else {
+                statusElement.className = 'websocket-status ws-disconnected';
+                statusElement.textContent = '🔴 WebSocket Disconnected';
+            }
+        }
+        
+        function handleWebSocketMessage(data) {
+            addUpdateLog(`${data.type}: ${JSON.stringify(data)}`);
+            
+            switch (data.type) {
+                case 'new_task':
+                    loadQueueStats();
+                    loadTaskHistory();
+                    break;
+                case 'task_progress':
+                    updateTaskProgress(data.task_id, data.progress);
+                    break;
+                case 'task_status_update':
+                    updateTaskStatus(data.task_id, data.status, data.progress);
+                    loadQueueStats();
+                    break;
+                case 'task_completed':
+                    handleTaskCompletion(data);
+                    loadQueueStats();
+                    loadTaskHistory();
+                    break;
+            }
+        }
+        
+        function addUpdateLog(message) {
+            const logElement = document.getElementById('updateLog');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.textContent = `[${timestamp}] ${message}`;
+            logElement.appendChild(logEntry);
+            
+            // Keep only last 20 entries
+            while (logElement.children.length > 20) {
+                logElement.removeChild(logElement.firstChild);
+            }
+            
+            // Auto-scroll to bottom
+            logElement.scrollTop = logElement.scrollHeight;
+        }
+        
+        function updateTaskProgress(taskId, progress) {
+            const taskElement = document.getElementById('currentTask');
+            const progressFill = document.getElementById('progressFill');
+            const taskDetails = document.getElementById('taskDetails');
+            
+            if (currentTasks.has(taskId)) {
+                taskElement.style.display = 'block';
+                progressFill.style.width = `${progress}%`;
+                taskDetails.textContent = `Processing task ${taskId} - ${progress.toFixed(1)}%`;
+            }
+        }
+        
+        function updateTaskStatus(taskId, status, progress) {
+            updateTaskProgress(taskId, progress || 0);
+            
+            if (status === 'processing') {
+                currentTasks.set(taskId, { status, progress: progress || 0 });
+                const taskTitle = document.getElementById('taskTitle');
+                taskTitle.textContent = `Processing Task: ${taskId}`;
+            } else if (status === 'completed' || status === 'failed') {
+                currentTasks.delete(taskId);
+                if (currentTasks.size === 0) {
+                    document.getElementById('currentTask').style.display = 'none';
+                }
+            }
+        }
+        
+        function handleTaskCompletion(data) {
+            const resultDiv = document.getElementById('result');
+            
+            if (data.task_id && currentTasks.has(data.task_id)) {
+                currentTasks.delete(data.task_id);
+                
+                if (data.status === 'completed' && data.result) {
+                    resultDiv.innerHTML = formatTaskResult(data);
+                } else if (data.status === 'failed') {
+                    resultDiv.innerHTML = `
+                        <div class="result error">
+                            <h3>❌ Task Failed</h3>
+                            <p><strong>Task ID:</strong> ${data.task_id}</p>
+                            <p><strong>Error:</strong> ${data.error || 'Unknown error'}</p>
+                        </div>
+                    `;
+                }
+            }
+        }
+        
+        function formatTaskResult(data) {
+            const result = data.result;
+            const taskId = data.task_id;
+            
+            // Check if this is a transcription result
+            if (result.text && result.segments) {
+                return formatTranscriptionResult(result, taskId);
+            }
+            // Check if this is a risk analysis result
+            else if (result.risk_analysis) {
+                return formatRiskAnalysisResult(result, taskId);
+            }
+            // Fallback to raw JSON
+            else {
+                return formatRawResult(result, taskId);
+            }
+        }
+        
+        function formatTranscriptionResult(result, taskId) {
+            const segments = result.segments || [];
+            const metadata = result.metadata || {};
+            
+            return `
+                <div class="result-container">
+                    <div class="result-header">
+                        <h3>🎵 Transcription Complete</h3>
+                        <button class="json-toggle" onclick="toggleJson('${taskId}')">Show JSON</button>
+                    </div>
+                    <div class="result-content">
+                        <div class="metadata-grid">
+                            <div class="metadata-item">
+                                <div class="metadata-label">Task ID</div>
+                                <div class="metadata-value">${taskId}</div>
+                            </div>
+                            <div class="metadata-item">
+                                <div class="metadata-label">Language</div>
+                                <div class="metadata-value">${result.language || 'Auto-detected'}</div>
+                            </div>
+                            <div class="metadata-item">
+                                <div class="metadata-label">Backend</div>
+                                <div class="metadata-value">${metadata.backend || 'Unknown'}</div>
+                            </div>
+                            <div class="metadata-item">
+                                <div class="metadata-label">Model</div>
+                                <div class="metadata-value">${metadata.model || 'Unknown'}</div>
+                            </div>
+                            <div class="metadata-item">
+                                <div class="metadata-label">Processing Time</div>
+                                <div class="metadata-value">${metadata.processing_time || 'N/A'}</div>
+                            </div>
+                        </div>
+                        
+                        <h4>📝 Full Transcript:</h4>
+                        <div class="transcription-text">${result.text || 'No transcription available'}</div>
+                        
+                        ${segments.length > 0 ? `
+                            <h4>📊 Segments (${segments.length}):</h4>
+                            <div class="segments-container">
+                                ${segments.map((segment, index) => `
+                                    <div class="segment-item">
+                                        <div class="segment-text">${segment.text}</div>
+                                        <div class="segment-meta">
+                                            <span>⏱️ ${segment.start.toFixed(1)}s - ${segment.end.toFixed(1)}s</span>
+                                            <span>🎯 Confidence: ${(segment.confidence * 100).toFixed(1)}%</span>
+                                            <span>📈 Avg LogProb: ${segment.avg_logprob.toFixed(2)}</span>
+                                        </div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        ` : ''}
+                        
+                        <div class="json-raw" id="json-${taskId}">
+                            <pre>${JSON.stringify(result, null, 2)}</pre>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function formatRiskAnalysisResult(result, taskId) {
+            const riskAnalysis = result.risk_analysis || {};
+            const metadata = result.metadata || {};
+            const isRisky = riskAnalysis.is_risky;
+            
+            return `
+                <div class="result-container">
+                    <div class="result-header">
+                        <h3>🔍 Risk Analysis Complete</h3>
+                        <button class="json-toggle" onclick="toggleJson('${taskId}')">Show JSON</button>
+                    </div>
+                    <div class="result-content">
+                        <div class="metadata-grid">
+                            <div class="metadata-item">
+                                <div class="metadata-label">Task ID</div>
+                                <div class="metadata-value">${taskId}</div>
+                            </div>
+                            <div class="metadata-item">
+                                <div class="metadata-label">Text Length</div>
+                                <div class="metadata-value">${metadata.text_length || result.text?.length || 'Unknown'} characters</div>
+                            </div>
+                            <div class="metadata-item">
+                                <div class="metadata-label">Model</div>
+                                <div class="metadata-value">${metadata.model || 'Unknown'}</div>
+                            </div>
+                            <div class="metadata-item">
+                                <div class="metadata-label">Confidence</div>
+                                <div class="metadata-value">${(riskAnalysis.confidence * 100).toFixed(1)}%</div>
+                            </div>
+                        </div>
+                        
+                        <h4>📋 Analyzed Text:</h4>
+                        <div class="transcription-text">${result.text || 'No text provided'}</div>
+                        
+                        <div class="risk-analysis-container">
+                            <h4>🛡️ Risk Assessment:</h4>
+                            <div class="risk-status ${isRisky ? 'risk-risky' : 'risk-safe'}">
+                                ${isRisky ? '⚠️ RISKY CONTENT DETECTED' : '✅ CONTENT IS SAFE'}
+                            </div>
+                            
+                            <div style="margin: 10px 0;">
+                                <strong>Raw Response:</strong> ${riskAnalysis.raw_response || 'N/A'}
+                            </div>
+                            
+                            ${riskAnalysis.detected_keywords && riskAnalysis.detected_keywords.length > 0 ? `
+                                <div style="margin: 10px 0;">
+                                    <strong>Detected Keywords:</strong>
+                                    <div style="margin-top: 5px;">
+                                        ${riskAnalysis.detected_keywords.map(keyword => 
+                                            `<span style="background: #fff3cd; padding: 2px 6px; border-radius: 3px; margin: 2px; display: inline-block;">${keyword}</span>`
+                                        ).join('')}
+                                    </div>
+                                </div>
+                            ` : '<div style="margin: 10px 0;"><strong>Detected Keywords:</strong> None</div>'}
+                        </div>
+                        
+                        <div class="json-raw" id="json-${taskId}">
+                            <pre>${JSON.stringify(result, null, 2)}</pre>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function formatRawResult(result, taskId) {
+            return `
+                <div class="result success">
+                    <h3>✅ Task Completed</h3>
+                    <p><strong>Task ID:</strong> ${taskId}</p>
+                    <div style="background: white; padding: 15px; border-radius: 5px; border: 1px solid #ccc;">
+                        <pre>${JSON.stringify(result, null, 2)}</pre>
+                    </div>
+                </div>
+            `;
+        }
+        
+        function toggleJson(taskId) {
+            const jsonDiv = document.getElementById(`json-${taskId}`);
+            if (jsonDiv) {
+                jsonDiv.style.display = jsonDiv.style.display === 'none' ? 'block' : 'none';
+            }
+        }
+        
+        // Load queue statistics
+        async function loadQueueStats() {
+            try {
+                const response = await fetch('/api/queue/stats');
+                const data = await response.json();
+                
+                if (response.ok && data.queue_stats) {
+                    const stats = data.queue_stats;
+                    document.getElementById('pendingCount').textContent = stats.pending_count;
+                    document.getElementById('processingCount').textContent = stats.processing_count;
+                    document.getElementById('completedCount').textContent = stats.completed_count;
+                    document.getElementById('failedCount').textContent = stats.failed_count;
+                    document.getElementById('totalTasks').textContent = stats.total_tasks;
+                }
+            } catch (error) {
+                console.error('Failed to load queue stats:', error);
+            }
+        }
+        
+        // Load task history
+        async function loadTaskHistory() {
+            try {
+                const response = await fetch('/api/queue/history?limit=10');
+                const data = await response.json();
+                
+                if (response.ok && data.tasks) {
+                    const historyDiv = document.getElementById('taskHistory');
+                    
+                    if (data.tasks.length === 0) {
+                        historyDiv.innerHTML = '<p>No tasks in history</p>';
+                        return;
+                    }
+                    
+                    historyDiv.innerHTML = data.tasks.map(task => {
+                        const hasResult = task.result && task.status === 'Completed';
+                        const isTranscription = hasResult && task.result.text && task.result.segments;
+                        const isRiskAnalysis = hasResult && task.result.risk_analysis;
+                        
+                        let resultPreview = '';
+                        if (isTranscription) {
+                            const text = task.result.text || '';
+                            resultPreview = `<div style="background: #e3f2fd; padding: 8px; border-radius: 3px; margin: 5px 0; font-size: 12px; max-height: 60px; overflow: hidden;">
+                                <strong>📝:</strong> ${text.length > 100 ? text.substring(0, 100) + '...' : text}
+                            </div>`;
+                        } else if (isRiskAnalysis) {
+                            const riskStatus = task.result.risk_analysis.is_risky ? '⚠️ Risky' : '✅ Safe';
+                            const confidence = (task.result.risk_analysis.confidence * 100).toFixed(1);
+                            resultPreview = `<div style="background: #fff8e1; padding: 8px; border-radius: 3px; margin: 5px 0; font-size: 12px;">
+                                <strong>🔍:</strong> ${riskStatus} (${confidence}% confidence)<br>
+                                <strong>Text:</strong> ${task.result.text?.substring(0, 80) || ''}${task.result.text?.length > 80 ? '...' : ''}
+                            </div>`;
+                        }
+                        
+                        return `
+                            <div class="task-item ${task.status.toLowerCase()}">
+                                <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+                                    <div style="flex: 1;">
+                                        <strong>ID:</strong> ${task.id}<br>
+                                        <strong>Status:</strong> ${task.status} (${task.progress.toFixed(1)}%)<br>
+                                        <strong>Created:</strong> ${new Date(task.created_at).toLocaleString()}<br>
+                                        ${task.completed_at ? `<strong>Completed:</strong> ${new Date(task.completed_at).toLocaleString()}<br>` : ''}
+                                        ${task.error ? `<strong>Error:</strong> ${task.error}<br>` : ''}
+                                    </div>
+                                    ${hasResult ? `<button onclick="showTaskResult('${task.id}')" style="background: #007bff; color: white; border: none; padding: 5px 10px; border-radius: 3px; cursor: pointer; font-size: 12px;">View Result</button>` : ''}
+                                </div>
+                                ${resultPreview}
+                            </div>
+                        `;
+                    }).join('');
+                }
+            } catch (error) {
+                console.error('Failed to load task history:', error);
+            }
+        }
+        
+        // Show detailed task result
+        async function showTaskResult(taskId) {
+            try {
+                const response = await fetch(`/api/task/${taskId}/status`);
+                const task = await response.json();
+                
+                if (response.ok && task.result) {
+                    const resultDiv = document.getElementById('result');
+                    resultDiv.innerHTML = formatTaskResult({
+                        task_id: taskId,
+                        status: 'completed',
+                        result: task.result
+                    });
+                    
+                    // Scroll to result
+                    resultDiv.scrollIntoView({ behavior: 'smooth' });
+                }
+            } catch (error) {
+                console.error('Failed to load task result:', error);
+                alert('Failed to load task result');
+            }
+        }
+        
+        // Upload form handler
         document.getElementById('uploadForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
             const fileInput = document.getElementById('audioFile');
             const languageSelect = document.getElementById('language');
             const backendSelect = document.getElementById('backend');
+            const prioritySelect = document.getElementById('priority');
             const riskAnalysisSelect = document.getElementById('riskAnalysis');
             const resultDiv = document.getElementById('result');
             const loadingDiv = document.getElementById('loading');
@@ -340,6 +1094,7 @@
             const params = new URLSearchParams();
             params.append('language', languageSelect.value);
             params.append('backend', backendSelect.value);
+            params.append('priority', prioritySelect.value);
             params.append('risk_analysis', riskAnalysisSelect.value);
             
             // Show loading
@@ -347,69 +1102,36 @@
             resultDiv.innerHTML = '';
             
             try {
-                const response = await fetch(`/transcribe?${params.toString()}`, {
+                const response = await fetch(`/api/transcribe?${params.toString()}`, {
                     method: 'POST',
                     body: formData
                 });
                 
                 const data = await response.json();
                 
-                if (response.ok && data.status === 'completed') {
-                    let riskAnalysisHtml = '';
-                    if (data.risk_analysis) {
-                        const riskClass = data.risk_analysis.is_risky ? 'risk-risky' : 'risk-safe';
-                        const riskIcon = data.risk_analysis.is_risky ? '⚠️' : '✅';
-                        const riskText = data.risk_analysis.is_risky ? 'RISKY CONTENT DETECTED' : 'CONTENT APPEARS SAFE';
-                        
-                        riskAnalysisHtml = `
-                            <h4>🔍 Risk Analysis Result:</h4>
-                            <div class="risk-result ${riskClass}">
-                                ${riskIcon} ${riskText}
-                                <br><strong>Confidence:</strong> ${(data.risk_analysis.confidence * 100).toFixed(1)}%
-                                <br><strong>Raw Response:</strong> ${data.risk_analysis.raw_response}
-                            </div>
-                        `;
-                    } else if (data.metadata?.risk_analysis_enabled) {
-                        riskAnalysisHtml = `
-                            <h4>🔍 Risk Analysis:</h4>
-                            <div class="risk-warning">
-                                Risk analysis was enabled but failed. LlamaEdge server may not be available.
-                            </div>
-                        `;
-                    }
+                if (response.ok && data.status === 'queued') {
+                    currentTasks.set(data.task_id, { status: 'pending', progress: 0 });
                     
                     resultDiv.innerHTML = `
                         <div class="result success">
-                            <h3>✅ Transcription Successful</h3>
+                            <h3>📤 Task Queued Successfully</h3>
                             <p><strong>Task ID:</strong> ${data.task_id}</p>
-                            <p><strong>File:</strong> ${data.metadata?.original_filename}</p>
-                            <p><strong>Language:</strong> ${data.metadata?.language}</p>
-                            <p><strong>Backend:</strong> ${data.metadata?.backend}</p>
-                            <p><strong>Model:</strong> ${data.metadata?.model}</p>
-                            <p><strong>Risk Analysis:</strong> ${data.metadata?.risk_analysis_enabled ? 'Enabled' : 'Disabled'}</p>
-                            
-                            ${riskAnalysisHtml}
-                            
-                            <h4>📄 Transcription Result:</h4>
-                            <div style="background: white; padding: 15px; border-radius: 5px; border: 1px solid #ccc; white-space: pre-wrap;">${data.result?.text || 'No transcription available'}</div>
-                            
-                            <h4>📋 Segments:</h4>
-                            <div style="max-height: 300px; overflow-y: auto;">
-                                ${data.result?.segments?.map(segment => `
-                                    <div style="background: white; margin: 5px 0; padding: 10px; border-radius: 3px; border-left: 3px solid #007bff;">
-                                        <strong>[${segment.start.toFixed(2)}s - ${segment.end.toFixed(2)}s]:</strong> ${segment.text}
-                                    </div>
-                                `).join('') || 'No segments available'}
-                            </div>
+                            <p><strong>Request ID:</strong> ${data.request_id}</p>
+                            <p><strong>Status:</strong> Queued for processing</p>
+                            <p>You will receive real-time updates via WebSocket as the task progresses.</p>
+                            <p><strong>Track Progress:</strong> <a href="/api/task/${data.task_id}/status" target="_blank">Check Status</a></p>
                         </div>
                     `;
+                    
+                    // Refresh queue stats and history
+                    loadQueueStats();
+                    loadTaskHistory();
                 } else {
                     resultDiv.innerHTML = `
                         <div class="result error">
-                            <h3>❌ Transcription Failed</h3>
+                            <h3>❌ Failed to Queue Task</h3>
                             <p><strong>Error:</strong> ${data.error || data.message || 'Unknown error'}</p>
-                            ${data.suggestion ? `<p><strong>Suggestion:</strong> ${data.suggestion}</p>` : ''}
-                            ${data.task_id ? `<p><strong>Task ID:</strong> ${data.task_id}</p>` : ''}
+                            ${data.details ? `<p><strong>Details:</strong> ${data.details}</p>` : ''}
                         </div>
                     `;
                 }
@@ -444,48 +1166,41 @@
             riskResultDiv.innerHTML = '';
             
             try {
-                const response = await fetch('/risk-analysis', {
+                const response = await fetch('/api/risk-analysis', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json'
                     },
                     body: JSON.stringify({
-                        text: textInput.value.trim()
+                        text: textInput.value.trim(),
+                        priority: 1
                     })
                 });
                 
                 const data = await response.json();
                 
-                if (response.ok && data.risk_analysis) {
-                    const riskClass = data.risk_analysis.is_risky ? 'risk-risky' : 'risk-safe';
-                    const riskIcon = data.risk_analysis.is_risky ? '⚠️' : '✅';
-                    const riskText = data.risk_analysis.is_risky ? 'RISKY CONTENT DETECTED' : 'CONTENT APPEARS SAFE';
+                if (response.ok && data.status === 'queued') {
+                    currentTasks.set(data.task_id, { status: 'pending', progress: 0 });
                     
                     riskResultDiv.innerHTML = `
                         <div class="result success">
-                            <h3>🔍 Risk Analysis Complete</h3>
-                            
-                            <div class="risk-result ${riskClass}">
-                                ${riskIcon} ${riskText}
-                                <br><strong>Confidence:</strong> ${(data.risk_analysis.confidence * 100).toFixed(1)}%
-                                <br><strong>Raw Response:</strong> ${data.risk_analysis.raw_response}
-                            </div>
-                            
-                            <h4>📄 Analyzed Text:</h4>
-                            <div style="background: white; padding: 15px; border-radius: 5px; border: 1px solid #ccc; white-space: pre-wrap; max-height: 200px; overflow-y: auto;">${data.text}</div>
-                            
-                            <p style="margin-top: 15px; font-size: 12px; color: #666;">
-                                <strong>Analysis Server:</strong> ${data.metadata?.llama_server}<br>
-                                <strong>Timestamp:</strong> ${new Date(data.metadata?.analysis_timestamp).toLocaleString()}
-                            </p>
+                            <h3>� Risk Analysis Queued</h3>
+                            <p><strong>Task ID:</strong> ${data.task_id}</p>
+                            <p><strong>Request ID:</strong> ${data.request_id}</p>
+                            <p><strong>Status:</strong> Queued for analysis</p>
+                            <p>You will receive real-time updates via WebSocket as the analysis progresses.</p>
                         </div>
                     `;
+                    
+                    // Refresh queue stats and history
+                    loadQueueStats();
+                    loadTaskHistory();
                 } else {
                     riskResultDiv.innerHTML = `
                         <div class="result error">
-                            <h3>❌ Risk Analysis Failed</h3>
+                            <h3>❌ Failed to Queue Risk Analysis</h3>
                             <p><strong>Error:</strong> ${data.error || data.message || 'Unknown error'}</p>
-                            ${data.suggestion ? `<p><strong>Suggestion:</strong> ${data.suggestion}</p>` : ''}
+                            ${data.details ? `<p><strong>Details:</strong> ${data.details}</p>` : ''}
                         </div>
                     `;
                 }
@@ -494,7 +1209,7 @@
                     <div class="result error">
                         <h3>❌ Request Failed</h3>
                         <p><strong>Error:</strong> ${error.message}</p>
-                        <p>Make sure the API server is running and LlamaEdge server is available.</p>
+                        <p>Make sure the API server is running and try again.</p>
                     </div>
                 `;
             } finally {
@@ -502,16 +1217,30 @@
             }
         });
 
-        // Health check on page load
-        fetch('/health')
-            .then(response => response.json())
-            .then(data => {
-                console.log('API Health:', data);
-                console.log('Note: If you see "ggml_metal_free: deallocating" in server logs, this is normal Metal cleanup behavior.');
-            })
-            .catch(error => {
-                console.error('API Health check failed:', error);
-            });
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Connect WebSocket
+            connectWebSocket();
+            
+            // Load initial data
+            loadQueueStats();
+            loadTaskHistory();
+            
+            // Set up periodic refresh for queue stats
+            setInterval(loadQueueStats, 10000); // Every 10 seconds
+            
+            // Health check on page load
+            fetch('/api/health')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('API Health:', data);
+                    addUpdateLog('API health check successful');
+                })
+                .catch(error => {
+                    console.error('API Health check failed:', error);
+                    addUpdateLog('API health check failed');
+                });
+        });
     </script>
 </body>
 </html>

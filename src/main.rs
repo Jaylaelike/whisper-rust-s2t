@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
 
+pub mod queue;
+
 #[cfg(feature = "full-audio-support")]
 use symphonia::core::audio::SampleBuffer;
 #[cfg(feature = "full-audio-support")]
@@ -335,6 +337,23 @@ pub struct TranscriptionSegment {
     start_time: f64,
     end_time: f64,
     chunk_index: usize,
+}
+
+impl TranscriptionSegment {
+    pub fn to_whisper_segment(&self, id: i32) -> serde_json::Value {
+        serde_json::json!({
+            "id": id,
+            "seek": 0,
+            "start": self.start_time,
+            "end": self.end_time,
+            "text": self.text,
+            "tokens": [],
+            "temperature": 0.0,
+            "avg_logprob": 0.0,
+            "compression_ratio": 0.0,
+            "no_speech_prob": 0.0
+        })
+    }
 }
 
 fn display_chunked_transcription_results(
@@ -1230,4 +1249,146 @@ impl Logger {
         let length_factor = (word.len().min(10) as f64 / 10.0) * 0.25;
         (base + length_factor).min(0.98)
     }
+}
+
+// Public API functions for the queue system
+
+/// Transcribe an audio file and return the result in OpenAI Whisper format
+pub async fn transcribe_audio_file(
+    audio_path: &str,
+    backend: &str,
+    language: Option<&str>,
+) -> Result<serde_json::Value, String> {
+    let language = language.unwrap_or("th");
+    
+    // Determine backend settings
+    let (use_gpu, use_coreml) = match backend {
+        "gpu" => (true, false),
+        "coreml" => (false, true),
+        "cpu" | "auto" | _ => (false, false),
+    };
+    
+    // Model path - default to the large model
+    let model_path = "model/ggml-large-v3.bin";
+    
+    // Initialize Whisper context
+    let ctx = initialize_whisper_with_debug(model_path, language, use_gpu, use_coreml)
+        .map_err(|e| format!("Failed to initialize Whisper: {}", e))?;
+    
+    // Check if chunking is needed
+    let should_chunk = should_chunk_audio(audio_path)
+        .map_err(|e| format!("Failed to check if chunking needed: {}", e))?;
+    
+    if should_chunk {
+        // Process with chunking
+        let segments = transcribe_with_chunking(&ctx, audio_path, language)
+            .map_err(|e| format!("Chunked transcription failed: {}", e))?;
+        
+        // Convert to WhisperResult format
+        let whisper_segments: Vec<_> = segments.iter().enumerate().map(|(i, segment)| {
+            segment.to_whisper_segment(i as i32)
+        }).collect();
+        
+        let full_text = segments.iter().map(|s| s.text.as_str()).collect::<Vec<_>>().join(" ");
+        
+        let result = serde_json::json!({
+            "text": full_text,
+            "segments": whisper_segments,
+            "language": language
+        });
+        
+        Ok(result)
+    } else {
+        // Process as single file
+        let audio_data = load_audio_file_with_debug(audio_path)
+            .map_err(|e| format!("Failed to load audio: {}", e))?;
+        
+        let segments = transcribe_with_debug(&ctx, audio_data, language)
+            .map_err(|e| format!("Transcription failed: {}", e))?;
+        
+        // Convert to OpenAI format using our existing converter
+        let mut logger = Logger::new(audio_path, language);
+        logger.add_segments_from_whisper_rs(&segments);
+        let whisper_result = logger.create_whisper_format();
+        
+        Ok(serde_json::to_value(whisper_result).unwrap())
+    }
+}
+
+/// Analyze text for risk using LlamaEdge
+pub async fn analyze_risk(text: &str) -> Result<serde_json::Value, String> {
+    // Use the default LlamaEdge server URL
+    let llama_url = "http://localhost:8080";
+    
+    // Simple prompt for risk detection
+    let prompt = format!(
+        "Analyze this text for harmful, dangerous, or inappropriate content. Respond with only 'RISKY' or 'SAFE': {}",
+        text
+    );
+    
+    // Create the request payload
+    let payload = serde_json::json!({
+        "messages": [
+            {
+                "role": "user",
+                "content": prompt
+            }
+        ],
+        "max_tokens": 10,
+        "temperature": 0.1
+    });
+    
+    // Make HTTP request to LlamaEdge server
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&format!("{}/v1/chat/completions", llama_url))
+        .header("Content-Type", "application/json")
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to send request to LlamaEdge: {}", e))?;
+    
+    if !response.status().is_success() {
+        return Err(format!("LlamaEdge request failed with status: {}", response.status()));
+    }
+    
+    let response_json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse LlamaEdge response: {}", e))?;
+    
+    // Extract the response text
+    let raw_response = response_json
+        .get("choices")
+        .and_then(|choices| choices.get(0))
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(|content| content.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_uppercase();
+    
+    // Determine if risky
+    let is_risky = raw_response.contains("RISKY");
+    let confidence = if raw_response == "RISKY" || raw_response == "SAFE" {
+        0.9
+    } else {
+        0.5 // Lower confidence for unclear responses
+    };
+    
+    let result = serde_json::json!({
+        "text": text,
+        "risk_analysis": {
+            "is_risky": is_risky,
+            "raw_response": raw_response,
+            "confidence": confidence
+        },
+        "metadata": {
+            "model": "llamaedge",
+            "timestamp": chrono::Utc::now(),
+            "prompt_type": "simple_classification"
+        }
+    });
+    
+    Ok(result)
 }

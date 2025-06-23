@@ -32,6 +32,15 @@ tempfile = "3.8"
 llamaedge = "0.0.1"
 reqwest = { version = "0.12", features = ["json"] }
 
+# Queue system dependencies
+redis = { version = "0.26", features = ["tokio-comp", "connection-manager"] }
+actix-web-actors = "4.3"
+actix = "0.13"
+queues = "1.1"
+async-trait = "0.1"
+log = "0.4"
+env_logger = "0.11"
+
 [features]
 default = ["wav-support", "full-audio-support"]
 wav-support = ["hound"]
@@ -44,3 +53,7 @@ path = "src/main.rs"
 [[bin]]
 name = "api-server"
 path = "src/bin/api_server.rs"
+
+[[bin]]
+name = "api-server-queue"
+path = "src/bin/api_server_new.rs"
