@@ -186,6 +186,37 @@ impl TaskQueue {
         Ok(())
     }
     
+    async fn get_task_result(&self, task_id: &str) -> Result<Option<TaskResult>, QueueError> {
+        // First check in-memory cache
+        {
+            let task_results = self.task_results.read().await;
+            if let Some(task_result) = task_results.get(task_id) {
+                return Ok(Some(task_result.clone()));
+            }
+        }
+        
+        // If not in cache, load from Redis
+        let mut conn = self.redis_manager.clone();
+        let key = format!("task_result:{}", task_id);
+        let data: Result<String, redis::RedisError> = conn.get(&key).await;
+        
+        match data {
+            Ok(data) => {
+                let task_result: TaskResult = serde_json::from_str(&data)?;
+                
+                // Update cache
+                let mut task_results = self.task_results.write().await;
+                task_results.insert(task_id.to_string(), task_result.clone());
+                
+                Ok(Some(task_result))
+            }
+            Err(_) => {
+                // Key doesn't exist or other error
+                Ok(None)
+            }
+        }
+    }
+    
     async fn enqueue_task_request(&self, task_id: &str) -> Result<(), QueueError> {
         let mut conn = self.redis_manager.clone();
         let timestamp = SystemTime::now()
@@ -391,11 +422,10 @@ impl TaskQueue {
         });
         self.broadcast_to_websockets(&progress_msg.to_string()).await;
         
-        // Call the actual transcription function from main.rs
-        task_result.progress = 50.0;
+        // Update progress before starting heavy computation
+        task_result.progress = 20.0;
         let _ = self.save_task_result(task_result).await;
         
-        // Update progress again
         let progress_msg = serde_json::json!({
             "type": "task_progress", 
             "task_id": task_result.id,
@@ -403,14 +433,76 @@ impl TaskQueue {
         });
         self.broadcast_to_websockets(&progress_msg.to_string()).await;
         
-        // Call the actual transcription function
-        match crate::transcribe_audio_file(file_path, language, backend).await {
-            Ok(result) => {
-                task_result.progress = 100.0;
-                Ok(result)
-            }
-            Err(e) => {
-                Err(format!("Transcription failed: {}", e))
+        // Create a channel for communication
+        let (tx, mut rx) = tokio::sync::mpsc::channel(1);
+        
+        // Clone necessary data for the thread
+        let file_path_owned = file_path.to_string();
+        let backend_owned = backend.to_string();
+        let language_owned = language.map(|s| s.to_string());
+        let queue_clone = self.clone();
+        let task_id = task_result.id.clone();
+        
+        // Run transcription in a separate thread to avoid blocking the actor
+        std::thread::spawn(move || {
+            // Create a new Tokio runtime for this thread
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            let result = rt.block_on(async {
+                crate::transcribe_audio_file(&file_path_owned, language_owned.as_deref(), &backend_owned).await
+            });
+            
+            // Send result back
+            rt.block_on(async {
+                let _ = tx.send(result).await;
+            });
+        });
+        
+        // Wait for result while periodically updating progress and allowing other tasks to run
+        let mut progress = 30.0f64;
+        let progress_increment = 60.0f64 / 30.0f64; // Spread remaining 60% over ~30 seconds max
+        
+        loop {
+            // Check if we have a result (non-blocking)
+            match tokio::time::timeout(tokio::time::Duration::from_secs(1), rx.recv()).await {
+                Ok(Some(result)) => {
+                    // Got the result
+                    match result {
+                        Ok(transcription_result) => {
+                            task_result.progress = 100.0;
+                            return Ok(transcription_result);
+                        }
+                        Err(e) => {
+                            return Err(format!("Transcription failed: {}", e));
+                        }
+                    }
+                }
+                Ok(None) => {
+                    // Channel closed without result - error
+                    return Err("Transcription task failed unexpectedly".to_string());
+                }
+                Err(_) => {
+                    // Timeout - continue waiting but update progress
+                    progress = (progress + progress_increment).min(90.0);
+                    
+                    // Update progress in Redis
+                    if let Ok(mut current_task) = self.get_task_result(&task_id).await {
+                        if let Some(ref mut task) = current_task {
+                            task.progress = progress as f32;
+                            let _ = self.save_task_result(task).await;
+                            
+                            // Broadcast progress update
+                            let progress_msg = serde_json::json!({
+                                "type": "task_progress",
+                                "task_id": task_id,
+                                "progress": progress as f32
+                            });
+                            self.broadcast_to_websockets(&progress_msg.to_string()).await;
+                        }
+                    }
+                    
+                    // Yield control to allow other tasks to process
+                    tokio::task::yield_now().await;
+                }
             }
         }
     }
