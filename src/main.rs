@@ -1,10 +1,11 @@
-use std::env;
 use std::fs::{File, metadata};
 use std::path::Path;
 use std::io::Write;
 use chrono::{DateTime, Utc};
+use clap::{Arg, Command};
 use serde::{Deserialize, Serialize};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use rubato::{Resampler, SincFixedIn, SincInterpolationType, SincInterpolationParameters, WindowFunction};
 
 #[cfg(feature = "full-audio-support")]
 use symphonia::core::audio::SampleBuffer;
@@ -30,19 +31,96 @@ const MAX_DURATION_MINUTES: f32 = 60.0;
 const CHUNK_DURATION_MINUTES: f32 = 5.0;
 const SAMPLE_RATE: u32 = 16000;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Get command line arguments
-    let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
-        print_usage(&args[0]);
-        std::process::exit(1);
-    }
+// Audio data with sample rate information
+#[derive(Debug, Clone)]
+struct AudioData {
+    samples: Vec<f32>,
+    sample_rate: u32,
+    channels: u16,
+}
 
-    let audio_path = &args[1];
-    let model_path = &args[2];
+impl AudioData {
+    fn len(&self) -> usize {
+        self.samples.len()
+    }
     
-    // Optional: language override (default is Thai)
-    let language = args.get(3).map(|s| s.as_str()).unwrap_or("th");
+    fn is_empty(&self) -> bool {
+        self.samples.is_empty()
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let matches = Command::new("Thai Audio Transcriber")
+        .version("0.1.0")
+        .about("Speech-to-text transcription using whisper-rs with robust audio loading and chunked processing")
+        .arg(
+            Arg::new("audio")
+                .help("Path to the audio file to transcribe")
+                .required(true)
+                .index(1),
+        )
+        .arg(
+            Arg::new("model")
+                .help("Path to the Whisper model file (e.g., ggml-large-v3.bin or ggml-large-v3-encoder.mlmodelc)")
+                .required(true)
+                .index(2),
+        )
+        .arg(
+            Arg::new("language")
+                .short('l')
+                .long("language")
+                .help("Language code for transcription (default: th for Thai)")
+                .default_value("th"),
+        )
+        .arg(
+            Arg::new("gpu")
+                .short('g')
+                .long("gpu")
+                .help("Enable GPU (Metal) acceleration. WARNING: May cause buffer overlap errors on some systems")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("cpu")
+                .short('c')
+                .long("cpu")
+                .help("Force CPU-only mode (default for stability)")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("coreml")
+                .long("coreml")
+                .help("Enable Core ML acceleration (for .mlmodelc models on Apple Silicon)")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .get_matches();
+
+    let audio_path = matches.get_one::<String>("audio").unwrap();
+    let model_path = matches.get_one::<String>("model").unwrap();
+    let language = matches.get_one::<String>("language").unwrap();
+    
+    // Determine backend usage
+    let use_coreml = matches.get_flag("coreml");
+    let use_gpu = if matches.get_flag("cpu") {
+        false // Explicitly disabled
+    } else if matches.get_flag("gpu") {
+        true // Explicitly enabled
+    } else if use_coreml {
+        false // Core ML doesn't need Metal GPU
+    } else {
+        false // Default to CPU-only for stability
+    };
+
+    // Auto-detect Core ML models
+    let is_coreml_model = model_path.ends_with(".mlmodelc") || model_path.contains(".mlmodelc");
+    let use_coreml_final = use_coreml || is_coreml_model;
+
+    if use_coreml_final {
+        println!("🍎 Core ML acceleration enabled for Apple Neural Engine");
+    } else if use_gpu {
+        println!("⚡ GPU (Metal) acceleration enabled - this may cause buffer overlap errors");
+    } else {
+        println!("🖥️  CPU-only mode enabled for maximum stability");
+    }
 
     // Validate inputs
     validate_files(audio_path, model_path)?;
@@ -58,8 +136,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🔄 Loading Whisper model with debugging...");
     
-    // Initialize Whisper model with debugging
-    let ctx = initialize_whisper_with_debug(model_path, language)?;
+    // Initialize Whisper model with debugging and backend settings
+    let ctx = initialize_whisper_with_debug(model_path, language, use_gpu, use_coreml_final)?;
 
     println!("🎵 Loading and processing audio file with debugging: {}", audio_path);
     
@@ -123,29 +201,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn print_usage(program_name: &str) {
-    eprintln!("Thai Audio Transcriber using whisper-rs");
-    eprintln!();
-    eprintln!("Usage: {} <audio_file> <model_file> [language]", program_name);
-    eprintln!();
-    eprintln!("Arguments:");
-    eprintln!("  audio_file   Path to audio file (WAV, MP3, etc.)");
-    eprintln!("  model_file   Path to Whisper model file (.bin)");
-    eprintln!("  language     Language code (default: 'th' for Thai)");
-    eprintln!();
-    eprintln!("Examples:");
-    eprintln!("  {} ./audio/thai_speech.wav ./model/ggml-large-v3.bin", program_name);
-    eprintln!("  {} ./audio/thai_speech.wav ./model/ggml-large-v3.bin th", program_name);
-    eprintln!("  {} ./audio/english_speech.wav ./model/ggml-large-v3.bin en", program_name);
-    eprintln!();
-    eprintln!("Output:");
-    eprintln!("  - Displays transcription results in the console");
-    eprintln!("  - Creates result.json with complete transcription data");
-    eprintln!("  - Creates timestamped log files for record keeping");
-    eprintln!();
-    eprintln!("Supported languages: th (Thai), en (English), ja (Japanese), etc.");
-}
-
 fn validate_files(audio_path: &str, model_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     if !Path::new(audio_path).exists() {
         return Err(format!("Audio file '{}' not found", audio_path).into());
@@ -158,7 +213,7 @@ fn validate_files(audio_path: &str, model_path: &str) -> Result<(), Box<dyn std:
     Ok(())
 }
 
-fn should_chunk_audio(audio_path: &str) -> Result<bool, Box<dyn std::error::Error>> {
+pub fn should_chunk_audio(audio_path: &str) -> Result<bool, Box<dyn std::error::Error>> {
     // Check file size
     let file_metadata = metadata(audio_path)?;
     let file_size_mb = file_metadata.len() / (1024 * 1024);
@@ -182,7 +237,7 @@ fn should_chunk_audio(audio_path: &str) -> Result<bool, Box<dyn std::error::Erro
     Ok(false)
 }
 
-fn estimate_audio_duration(audio_path: &str) -> Result<f32, Box<dyn std::error::Error>> {
+pub fn estimate_audio_duration(audio_path: &str) -> Result<f32, Box<dyn std::error::Error>> {
     #[cfg(feature = "wav-support")]
     {
         let extension = Path::new(audio_path)
@@ -209,19 +264,29 @@ fn estimate_audio_duration(audio_path: &str) -> Result<f32, Box<dyn std::error::
     Ok(estimated_seconds / 60.0)
 }
 
-fn transcribe_with_chunking(
+pub fn transcribe_with_chunking(
     ctx: &WhisperContext,
     audio_path: &str,
     language: &str,
 ) -> Result<Vec<TranscriptionSegment>, Box<dyn std::error::Error>> {
     println!("🔄 Loading full audio file for chunking...");
-    let full_audio_data = load_audio_file_advanced(audio_path)?;
+    let audio_data = load_audio_file_advanced(audio_path)?;
+    
+    // Resample to 16kHz if necessary
+    let full_audio_samples = if audio_data.sample_rate != SAMPLE_RATE {
+        println!("🔄 Resampling for chunking: {}Hz → {}Hz", audio_data.sample_rate, SAMPLE_RATE);
+        resample_audio(audio_data.samples, audio_data.sample_rate, SAMPLE_RATE)?
+    } else {
+        audio_data.samples
+    };
     
     let samples_per_chunk = (CHUNK_DURATION_MINUTES * 60.0 * SAMPLE_RATE as f32) as usize;
-    let total_chunks = (full_audio_data.len() + samples_per_chunk - 1) / samples_per_chunk;
+    let total_chunks = (full_audio_samples.len() + samples_per_chunk - 1) / samples_per_chunk;
     
     println!("📊 Chunking info:");
-    println!("   Total samples: {}", full_audio_data.len());
+    println!("   Original sample rate: {} Hz", audio_data.sample_rate);
+    println!("   Target sample rate: {} Hz", SAMPLE_RATE);
+    println!("   Total samples: {}", full_audio_samples.len());
     println!("   Samples per chunk: {}", samples_per_chunk);
     println!("   Total chunks: {}", total_chunks);
     println!("   Chunk duration: {} minutes", CHUNK_DURATION_MINUTES);
@@ -229,7 +294,7 @@ fn transcribe_with_chunking(
     let mut all_segments = Vec::new();
     let mut total_duration_offset = 0.0;
     
-    for (chunk_index, chunk_data) in full_audio_data.chunks(samples_per_chunk).enumerate() {
+    for (chunk_index, chunk_data) in full_audio_samples.chunks(samples_per_chunk).enumerate() {
         let chunk_start_time = chunk_index as f32 * CHUNK_DURATION_MINUTES;
         
         println!("\n📝 Processing chunk {} of {} ({}min - {}min)", 
@@ -265,7 +330,7 @@ fn transcribe_with_chunking(
 }
 
 #[derive(Debug, Clone)]
-struct TranscriptionSegment {
+pub struct TranscriptionSegment {
     text: String,
     start_time: f64,
     end_time: f64,
@@ -341,7 +406,7 @@ fn display_chunked_transcription_results(
 }
 
 #[cfg(feature = "full-audio-support")]
-fn load_audio_file_advanced(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+fn load_audio_file_advanced(path: &str) -> Result<AudioData, Box<dyn std::error::Error>> {
     println!("🔄 Loading audio with Symphonia support...");
     
     let file = std::fs::File::open(path)?;
@@ -375,13 +440,13 @@ fn load_audio_file_advanced(path: &str) -> Result<Vec<f32>, Box<dyn std::error::
     
     let track_id = track.id;
     
+    // Extract audio information
+    let original_sample_rate = track.codec_params.sample_rate.unwrap_or(44100);
+    let channel_count = track.codec_params.channels.map(|c| c.count()).unwrap_or(1);
+    
     println!("📊 Audio Info (Symphonia):");
-    if let Some(sample_rate) = track.codec_params.sample_rate {
-        println!("   Sample Rate: {} Hz", sample_rate);
-    }
-    if let Some(channels) = track.codec_params.channels {
-        println!("   Channels: {}", channels.count());
-    }
+    println!("   Sample Rate: {} Hz", original_sample_rate);
+    println!("   Channels: {}", channel_count);
     
     // Use the default options for the decoder
     let dec_opts: DecoderOptions = Default::default();
@@ -391,7 +456,7 @@ fn load_audio_file_advanced(path: &str) -> Result<Vec<f32>, Box<dyn std::error::
         .make(&track.codec_params, &dec_opts)?;
     
     // Store the audio samples
-    let mut audio_data = Vec::new();
+    let mut audio_samples = Vec::new();
     
     // The decode loop
     loop {
@@ -433,10 +498,10 @@ fn load_audio_file_advanced(path: &str) -> Result<Vec<f32>, Box<dyn std::error::
                 let samples = sample_buf.samples();
                 if spec.channels.count() == 2 {
                     for chunk in samples.chunks_exact(2) {
-                        audio_data.push((chunk[0] + chunk[1]) / 2.0);
+                        audio_samples.push((chunk[0] + chunk[1]) / 2.0);
                     }
                 } else {
-                    audio_data.extend_from_slice(samples);
+                    audio_samples.extend_from_slice(samples);
                 }
             }
             Err(SymphoniaError::IoError(_)) => {
@@ -451,12 +516,17 @@ fn load_audio_file_advanced(path: &str) -> Result<Vec<f32>, Box<dyn std::error::
         }
     }
     
-    println!("✅ Loaded {} samples with Symphonia", audio_data.len());
-    Ok(audio_data)
+    println!("✅ Loaded {} samples with Symphonia", audio_samples.len());
+    
+    Ok(AudioData {
+        samples: audio_samples,
+        sample_rate: original_sample_rate,
+        channels: channel_count as u16,
+    })
 }
 
 #[cfg(not(feature = "full-audio-support"))]
-fn load_audio_file_advanced(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+fn load_audio_file_advanced(path: &str) -> Result<AudioData, Box<dyn std::error::Error>> {
     let extension = Path::new(path)
         .extension()
         .and_then(|ext| ext.to_str())
@@ -474,7 +544,7 @@ fn load_audio_file_advanced(path: &str) -> Result<Vec<f32>, Box<dyn std::error::
 }
 
 #[cfg(feature = "wav-support")]
-fn load_wav_file(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+fn load_wav_file(path: &str) -> Result<AudioData, Box<dyn std::error::Error>> {
     let mut reader = WavReader::open(path)?;
     let spec = reader.spec();
     
@@ -482,11 +552,6 @@ fn load_wav_file(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
     println!("   Sample Rate: {} Hz", spec.sample_rate);
     println!("   Channels: {}", spec.channels);
     println!("   Bits per Sample: {}", spec.bits_per_sample);
-    
-    // Whisper expects 16kHz mono
-    if spec.sample_rate != 16000 {
-        println!("⚠️  Warning: Audio is {}Hz, Whisper works best with 16kHz", spec.sample_rate);
-    }
     
     let samples: Result<Vec<f32>, _> = match spec.sample_format {
         SampleFormat::Int => {
@@ -499,25 +564,29 @@ fn load_wav_file(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
         }
     };
     
-    let mut audio_data = samples?;
+    let mut audio_samples = samples?;
     
     // Convert stereo to mono if necessary
     if spec.channels == 2 {
         println!("🔄 Converting stereo to mono...");
-        audio_data = audio_data
+        audio_samples = audio_samples
             .chunks_exact(2)
             .map(|chunk| (chunk[0] + chunk[1]) / 2.0)
             .collect();
     }
     
     println!("✅ Loaded {} samples ({:.2} seconds)", 
-             audio_data.len(), 
-             audio_data.len() as f32 / spec.sample_rate as f32);
+             audio_samples.len(), 
+             audio_samples.len() as f32 / spec.sample_rate as f32);
     
-    Ok(audio_data)
+    Ok(AudioData {
+        samples: audio_samples,
+        sample_rate: spec.sample_rate,
+        channels: if spec.channels == 2 { 1 } else { spec.channels }, // mono after conversion
+    })
 }
 
-fn load_audio_file_basic(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+fn load_audio_file_basic(path: &str) -> Result<AudioData, Box<dyn std::error::Error>> {
     use std::io::Read;
     
     println!("⚠️  Using basic PCM loader - assumes 16-bit PCM WAV at 16kHz");
@@ -528,7 +597,7 @@ fn load_audio_file_basic(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Err
     file.read_to_end(&mut buffer)?;
     
     // Skip WAV header and convert 16-bit PCM to f32
-    let audio_data: Vec<f32> = buffer
+    let audio_samples: Vec<f32> = buffer
         .chunks_exact(2)
         .skip(22) // Skip basic WAV header
         .map(|chunk| {
@@ -537,24 +606,91 @@ fn load_audio_file_basic(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Err
         })
         .collect();
     
-    println!("📊 Loaded {} samples (basic PCM)", audio_data.len());
-    Ok(audio_data)
+    println!("📊 Loaded {} samples (basic PCM)", audio_samples.len());
+    
+    Ok(AudioData {
+        samples: audio_samples,
+        sample_rate: 16000, // Assumed for basic loader
+        channels: 1, // Assumed mono
+    })
+}
+
+// Audio resampling function to convert any sample rate to 16kHz
+fn resample_audio(audio_data: Vec<f32>, original_sample_rate: u32, target_sample_rate: u32) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+    if original_sample_rate == target_sample_rate {
+        println!("✅ Audio already at target sample rate ({}Hz)", target_sample_rate);
+        return Ok(audio_data);
+    }
+    
+    println!("🔄 Resampling audio: {}Hz → {}Hz", original_sample_rate, target_sample_rate);
+    
+    // Calculate resampling ratio
+    let ratio = target_sample_rate as f64 / original_sample_rate as f64;
+    
+    // Create resampler parameters
+    let params = SincInterpolationParameters {
+        sinc_len: 256,
+        f_cutoff: 0.95,
+        interpolation: SincInterpolationType::Linear,
+        oversampling_factor: 256,
+        window: WindowFunction::BlackmanHarris2,
+    };
+    
+    // Create resampler
+    let mut resampler = SincFixedIn::<f32>::new(
+        ratio,
+        2.0, // max_resample_ratio_relative
+        params,
+        audio_data.len(),
+        1, // mono channel
+    )?;
+    
+    // Prepare input data (rubato expects Vec<Vec<f32>> for multi-channel)
+    let input_channels = vec![audio_data];
+    
+    // Perform resampling
+    let output_channels = resampler.process(&input_channels, None)?;
+    
+    // Extract mono channel
+    let resampled_data = output_channels.into_iter().next()
+        .ok_or("Failed to get resampled audio channel")?;
+    
+    println!("✅ Resampling completed: {} samples → {} samples", 
+             input_channels[0].len(), resampled_data.len());
+    
+    Ok(resampled_data)
 }
 
 // Enhanced audio loading with debugging
-fn load_audio_file_with_debug(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
+pub fn load_audio_file_with_debug(path: &str) -> Result<Vec<f32>, Box<dyn std::error::Error>> {
     println!("🔍 DEBUG: Loading audio file: {}", path);
     
     let audio_data = load_audio_file_advanced(path)?;
     
-    // Debug audio data
-    println!("🔍 DEBUG: Audio data loaded:");
-    println!("   - Sample count: {}", audio_data.len());
-    println!("   - Duration: {:.2} seconds", audio_data.len() as f32 / SAMPLE_RATE as f32);
+    // Debug original audio data
+    println!("🔍 DEBUG: Original audio data loaded:");
+    println!("   - Sample count: {}", audio_data.samples.len());
+    println!("   - Sample rate: {} Hz", audio_data.sample_rate);
+    println!("   - Channels: {}", audio_data.channels);
+    println!("   - Duration: {:.2} seconds", audio_data.samples.len() as f32 / audio_data.sample_rate as f32);
+    
+    // Resample to 16kHz if necessary
+    let final_samples = if audio_data.sample_rate != SAMPLE_RATE {
+        println!("🔄 Resampling required: {}Hz → {}Hz", audio_data.sample_rate, SAMPLE_RATE);
+        resample_audio(audio_data.samples, audio_data.sample_rate, SAMPLE_RATE)?
+    } else {
+        println!("✅ Audio already at target sample rate ({}Hz)", SAMPLE_RATE);
+        audio_data.samples
+    };
+    
+    // Debug final audio data
+    println!("🔍 DEBUG: Final audio data:");
+    println!("   - Sample count: {}", final_samples.len());
+    println!("   - Duration: {:.2} seconds", final_samples.len() as f32 / SAMPLE_RATE as f32);
     
     // Check for silence (all zeros or very low amplitude)
-    let max_amplitude = audio_data.iter().fold(0.0f32, |max, &x| max.max(x.abs()));
-    let rms = (audio_data.iter().map(|&x| x * x).sum::<f32>() / audio_data.len() as f32).sqrt();
+    let max_amplitude = final_samples.iter().fold(0.0f32, |max, &x| max.max(x.abs()));
+    let rms = (final_samples.iter().map(|&x| x * x).sum::<f32>() / final_samples.len() as f32).sqrt();
     
     println!("   - Max amplitude: {:.6}", max_amplitude);
     println!("   - RMS amplitude: {:.6}", rms);
@@ -569,27 +705,29 @@ fn load_audio_file_with_debug(path: &str) -> Result<Vec<f32>, Box<dyn std::error
     }
     
     // Sample first few values
-    println!("   - First 10 samples: {:?}", &audio_data[..audio_data.len().min(10)]);
+    println!("   - First 10 samples: {:?}", &final_samples[..final_samples.len().min(10)]);
     
     // Check for clipping
-    let clipped_count = audio_data.iter().filter(|&&x| x.abs() >= 0.99).count();
+    let clipped_count = final_samples.iter().filter(|&&x| x.abs() >= 0.99).count();
     if clipped_count > 0 {
         println!("⚠️  WARNING: {} samples appear clipped (>= 0.99)", clipped_count);
     }
     
-    Ok(audio_data)
+    Ok(final_samples)
 }
 
 // Enhanced model initialization with debugging
-fn initialize_whisper_with_debug(model_path: &str, language: &str) -> Result<WhisperContext, Box<dyn std::error::Error>> {
+pub fn initialize_whisper_with_debug(model_path: &str, language: &str, use_gpu: bool, use_coreml: bool) -> Result<WhisperContext, Box<dyn std::error::Error>> {
     println!("🔍 DEBUG: Initializing Whisper model...");
     println!("   - Model path: {}", model_path);
     println!("   - Target language: {}", language);
+    println!("   - GPU acceleration: {}", if use_gpu { "enabled" } else { "disabled" });
+    println!("   - Core ML acceleration: {}", if use_coreml { "enabled" } else { "disabled" });
     
     let ctx = WhisperContext::new_with_params(
         model_path,
         WhisperContextParameters {
-            use_gpu: false, // Disable GPU to avoid Metal issues
+            use_gpu,
             ..Default::default()
         },
     ).map_err(|e| format!("Failed to load Whisper model: {}", e))?;
@@ -599,7 +737,7 @@ fn initialize_whisper_with_debug(model_path: &str, language: &str) -> Result<Whi
 }
 
 // Enhanced transcription with debugging
-fn transcribe_with_debug(
+pub fn transcribe_with_debug(
     ctx: &WhisperContext,
     audio_data: Vec<f32>,
     language: &str,
@@ -715,10 +853,10 @@ fn test_audio_file_manually(path: &str) -> Result<(), Box<dyn std::error::Error>
     match load_audio_file_advanced(path) {
         Ok(data) => {
             println!("   - Audio loading: SUCCESS");
-            println!("   - Sample count: {}", data.len());
-            if !data.is_empty() {
-                println!("   - First sample: {}", data[0]);
-                println!("   - Last sample: {}", data[data.len() - 1]);
+            println!("   - Sample count: {}", data.samples.len());
+            if !data.samples.is_empty() {
+                println!("   - First sample: {}", data.samples[0]);
+                println!("   - Last sample: {}", data.samples[data.samples.len() - 1]);
             }
         },
         Err(e) => println!("   - Audio loading: FAILED - {}", e),
@@ -801,7 +939,7 @@ struct TranscriptionLog {
 
 // OpenAI Whisper format structures for result.json
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct WhisperWord {
+pub struct WhisperWord {
     text: String,
     start: f64,
     end: f64,
@@ -809,7 +947,7 @@ struct WhisperWord {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct WhisperSegment {
+pub struct WhisperSegment {
     id: i32,
     seek: i32,
     start: f64,
@@ -825,13 +963,13 @@ struct WhisperSegment {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-struct WhisperResult {
+pub struct WhisperResult {
     text: String,
     segments: Vec<WhisperSegment>,
     language: String,
 }
 
-struct Logger {
+pub struct Logger {
     start_time: std::time::Instant,
     log_data: TranscriptionLog,
 }
@@ -971,7 +1109,7 @@ impl Logger {
         Ok(())
     }
 
-    fn create_whisper_format(&self) -> WhisperResult {
+    pub fn create_whisper_format(&self) -> WhisperResult {
         let mut whisper_segments = Vec::new();
         
         for (i, segment) in self.log_data.segments.iter().enumerate() {

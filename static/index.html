@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ThaiPBS Transcription API</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+            color: #333;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-radius: 10px;
+        }
+        .risk-warning {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            color: #856404;
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-size: 12px;
+        }
+        .risk-result {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .risk-safe {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .risk-risky {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        .api-section {
+            background: #f8f9fa;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+            border-left: 4px solid #007bff;
+        }
+        .endpoint {
+            background: white;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+        }
+        .method {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-weight: bold;
+            font-size: 12px;
+            margin-right: 10px;
+        }
+        .post { background: #28a745; color: white; }
+        .get { background: #007bff; color: white; }
+        code {
+            background: #f1f3f4;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: 'Monaco', 'Consolas', monospace;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            border: 1px solid #dee2e6;
+        }
+        .upload-section {
+            background: white;
+            padding: 30px;
+            margin: 20px 0;
+            border-radius: 8px;
+            border: 2px dashed #007bff;
+        }
+        .upload-form {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        label {
+            font-weight: 600;
+        }
+        input, select, button {
+            padding: 10px;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            cursor: pointer;
+            font-weight: 600;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 5px;
+        }
+        .success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+        .error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+        #loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #007bff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🎤 ThaiPBS Transcription API</h1>
+        <p>Upload audio files and get speech-to-text transcription results with optional risk analysis</p>
+    </div>
+
+    <div class="api-section">
+        <h2>📋 API Endpoints</h2>
+        
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <strong>/transcribe</strong>
+            <p>Upload an audio file and get transcription results with optional risk analysis</p>
+            <strong>Parameters:</strong>
+            <ul>
+                <li><code>audio</code> - Audio file (multipart/form-data)</li>
+                <li><code>language</code> - Language code (query parameter, default: "th")</li>
+                <li><code>backend</code> - Processing backend: "cpu", "gpu", "coreml" (query parameter, default: "cpu")</li>
+                <li><code>chunking</code> - Enable chunking for long audio (query parameter, default: "true")</li>
+                <li><code>risk_analysis</code> - Enable content risk detection (query parameter, default: "false")</li>
+            </ul>
+        </div>
+
+        <div class="endpoint">
+            <span class="method post">POST</span>
+            <strong>/risk-analysis</strong>
+            <p>Analyze text content for risk detection (gambling, illegal activities, etc.)</p>
+            <strong>Body:</strong>
+            <ul>
+                <li><code>{"text": "content to analyze"}</code> - JSON with text to analyze</li>
+            </ul>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <strong>/health</strong>
+            <p>Check API health status</p>
+        </div>
+
+        <div class="endpoint">
+            <span class="method get">GET</span>
+            <strong>/languages</strong>
+            <p>Get list of supported languages</p>
+        </div>
+    </div>
+
+    <div class="upload-section">
+        <h2>🎵 Upload Audio File</h2>
+        <form class="upload-form" id="uploadForm">
+            <div class="form-group">
+                <label for="audioFile">Audio File:</label>
+                <input type="file" id="audioFile" name="file" accept="audio/*" required>
+            </div>
+            
+            <div class="form-group">
+                <label for="language">Language:</label>
+                <select id="language" name="language">
+                    <option value="th">Thai (ไทย)</option>
+                    <option value="en">English</option>
+                    <option value="zh">Chinese (中文)</option>
+                    <option value="ja">Japanese (日本語)</option>
+                    <option value="ko">Korean (한국어)</option>
+                    <option value="es">Spanish (Español)</option>
+                    <option value="fr">French (Français)</option>
+                    <option value="de">German (Deutsch)</option>
+                    <option value="ru">Russian (Русский)</option>
+                    <option value="ar">Arabic (العربية)</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="backend">Processing Backend:</label>
+                <select id="backend" name="backend">
+                    <option value="cpu">CPU Only (Recommended - Most Stable)</option>
+                    <option value="gpu">GPU (Metal) - ⚠️ May cause buffer errors</option>
+                    <option value="coreml">Core ML (Apple Neural Engine) - ⚠️ Experimental</option>
+                </select>
+                <small style="color: #666; font-size: 12px;">
+                    <strong>Important Notes:</strong><br>
+                    • <strong>CPU mode</strong> is most reliable and recommended for production use<br>
+                    • <strong>GPU/CoreML modes</strong> may show "buffer is nil" or "ggml_metal_free" messages in server logs<br>
+                    • <strong>"ggml_metal_free: deallocating"</strong> is NORMAL - it means Metal cleanup is working correctly<br>
+                    • If GPU fails, the system automatically falls back to CPU mode (this is expected behavior)<br>
+                    • Metal deallocation messages indicate proper resource cleanup, not errors
+                </small>
+            </div>
+
+            <div class="form-group">
+                <label for="riskAnalysis">Risk Analysis:</label>
+                <select id="riskAnalysis" name="riskAnalysis">
+                    <option value="false">Disabled (Default)</option>
+                    <option value="true">Enable Risk Detection</option>
+                </select>
+                <div class="risk-warning">
+                    <strong>⚠️ Risk Analysis Notice:</strong><br>
+                    • Requires LlamaEdge server running on port 8080<br>
+                    • Analyzes transcribed text for gambling, illegal activities, and suspicious content<br>
+                    • Uses Thai language prompts for content analysis<br>
+                    • If LlamaEdge server is not available, this feature will be disabled
+                </div>
+            </div>
+
+            <button type="submit">🚀 Transcribe Audio</button>
+        </form>
+
+        <div id="loading">
+            <div class="spinner"></div>
+            <p>Processing audio file... This may take a few minutes.</p>
+        </div>
+
+        <div id="result"></div>
+    </div>
+
+    <div class="upload-section">
+        <h2>🔍 Risk Analysis Tool</h2>
+        <form class="upload-form" id="riskForm">
+            <div class="form-group">
+                <label for="textInput">Text to Analyze:</label>
+                <textarea id="textInput" name="text" rows="5" placeholder="Enter text to analyze for risk content..." style="resize: vertical;"></textarea>
+            </div>
+            
+            <button type="submit">🔍 Analyze Risk</button>
+        </form>
+
+        <div id="riskLoading" style="display: none;">
+            <div class="spinner"></div>
+            <p>Analyzing text for risk content...</p>
+        </div>
+
+        <div id="riskResult"></div>
+    </div>
+
+    <div class="api-section">
+        <h2>📝 Example cURL Commands</h2>
+        
+        <h3>Basic Transcription (Thai):</h3>
+        <pre><code>curl -X POST "http://localhost:4000/transcribe?language=th&backend=cpu" \
+  -F "audio=@your_audio.mp3"</code></pre>
+
+        <h3>Transcription with Risk Analysis:</h3>
+        <pre><code>curl -X POST "http://localhost:4000/transcribe?language=th&backend=cpu&risk_analysis=true" \
+  -F "audio=@your_audio.mp3"</code></pre>
+
+        <h3>English Transcription with GPU:</h3>
+        <pre><code>curl -X POST "http://localhost:4000/transcribe?language=en&backend=gpu" \
+  -F "audio=@english_audio.wav"</code></pre>
+
+        <h3>Risk Analysis Only:</h3>
+        <pre><code>curl -X POST "http://localhost:4000/risk-analysis" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"มาเล่นบาคาร่าออนไลน์กันเถอะ ได้เงินง่ายๆ"}'</code></pre>
+
+        <h3>Health Check:</h3>
+        <pre><code>curl http://localhost:4000/health</code></pre>
+
+        <h3>Get Supported Languages:</h3>
+        <pre><code>curl http://localhost:4000/languages</code></pre>
+    </div>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('audioFile');
+            const languageSelect = document.getElementById('language');
+            const backendSelect = document.getElementById('backend');
+            const riskAnalysisSelect = document.getElementById('riskAnalysis');
+            const resultDiv = document.getElementById('result');
+            const loadingDiv = document.getElementById('loading');
+            
+            if (!fileInput.files[0]) {
+                alert('Please select an audio file');
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('audio', fileInput.files[0]);
+            
+            // Build query parameters
+            const params = new URLSearchParams();
+            params.append('language', languageSelect.value);
+            params.append('backend', backendSelect.value);
+            params.append('risk_analysis', riskAnalysisSelect.value);
+            
+            // Show loading
+            loadingDiv.style.display = 'block';
+            resultDiv.innerHTML = '';
+            
+            try {
+                const response = await fetch(`/transcribe?${params.toString()}`, {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.status === 'completed') {
+                    let riskAnalysisHtml = '';
+                    if (data.risk_analysis) {
+                        const riskClass = data.risk_analysis.is_risky ? 'risk-risky' : 'risk-safe';
+                        const riskIcon = data.risk_analysis.is_risky ? '⚠️' : '✅';
+                        const riskText = data.risk_analysis.is_risky ? 'RISKY CONTENT DETECTED' : 'CONTENT APPEARS SAFE';
+                        
+                        riskAnalysisHtml = `
+                            <h4>🔍 Risk Analysis Result:</h4>
+                            <div class="risk-result ${riskClass}">
+                                ${riskIcon} ${riskText}
+                                <br><strong>Confidence:</strong> ${(data.risk_analysis.confidence * 100).toFixed(1)}%
+                                <br><strong>Raw Response:</strong> ${data.risk_analysis.raw_response}
+                            </div>
+                        `;
+                    } else if (data.metadata?.risk_analysis_enabled) {
+                        riskAnalysisHtml = `
+                            <h4>🔍 Risk Analysis:</h4>
+                            <div class="risk-warning">
+                                Risk analysis was enabled but failed. LlamaEdge server may not be available.
+                            </div>
+                        `;
+                    }
+                    
+                    resultDiv.innerHTML = `
+                        <div class="result success">
+                            <h3>✅ Transcription Successful</h3>
+                            <p><strong>Task ID:</strong> ${data.task_id}</p>
+                            <p><strong>File:</strong> ${data.metadata?.original_filename}</p>
+                            <p><strong>Language:</strong> ${data.metadata?.language}</p>
+                            <p><strong>Backend:</strong> ${data.metadata?.backend}</p>
+                            <p><strong>Model:</strong> ${data.metadata?.model}</p>
+                            <p><strong>Risk Analysis:</strong> ${data.metadata?.risk_analysis_enabled ? 'Enabled' : 'Disabled'}</p>
+                            
+                            ${riskAnalysisHtml}
+                            
+                            <h4>📄 Transcription Result:</h4>
+                            <div style="background: white; padding: 15px; border-radius: 5px; border: 1px solid #ccc; white-space: pre-wrap;">${data.result?.text || 'No transcription available'}</div>
+                            
+                            <h4>📋 Segments:</h4>
+                            <div style="max-height: 300px; overflow-y: auto;">
+                                ${data.result?.segments?.map(segment => `
+                                    <div style="background: white; margin: 5px 0; padding: 10px; border-radius: 3px; border-left: 3px solid #007bff;">
+                                        <strong>[${segment.start.toFixed(2)}s - ${segment.end.toFixed(2)}s]:</strong> ${segment.text}
+                                    </div>
+                                `).join('') || 'No segments available'}
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div class="result error">
+                            <h3>❌ Transcription Failed</h3>
+                            <p><strong>Error:</strong> ${data.error || data.message || 'Unknown error'}</p>
+                            ${data.suggestion ? `<p><strong>Suggestion:</strong> ${data.suggestion}</p>` : ''}
+                            ${data.task_id ? `<p><strong>Task ID:</strong> ${data.task_id}</p>` : ''}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `
+                    <div class="result error">
+                        <h3>❌ Request Failed</h3>
+                        <p><strong>Error:</strong> ${error.message}</p>
+                        <p>Make sure the API server is running and try again.</p>
+                    </div>
+                `;
+            } finally {
+                loadingDiv.style.display = 'none';
+            }
+        });
+
+        // Risk analysis form handler
+        document.getElementById('riskForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const textInput = document.getElementById('textInput');
+            const riskResultDiv = document.getElementById('riskResult');
+            const riskLoadingDiv = document.getElementById('riskLoading');
+            
+            if (!textInput.value.trim()) {
+                alert('Please enter text to analyze');
+                return;
+            }
+            
+            // Show loading
+            riskLoadingDiv.style.display = 'block';
+            riskResultDiv.innerHTML = '';
+            
+            try {
+                const response = await fetch('/risk-analysis', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        text: textInput.value.trim()
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.risk_analysis) {
+                    const riskClass = data.risk_analysis.is_risky ? 'risk-risky' : 'risk-safe';
+                    const riskIcon = data.risk_analysis.is_risky ? '⚠️' : '✅';
+                    const riskText = data.risk_analysis.is_risky ? 'RISKY CONTENT DETECTED' : 'CONTENT APPEARS SAFE';
+                    
+                    riskResultDiv.innerHTML = `
+                        <div class="result success">
+                            <h3>🔍 Risk Analysis Complete</h3>
+                            
+                            <div class="risk-result ${riskClass}">
+                                ${riskIcon} ${riskText}
+                                <br><strong>Confidence:</strong> ${(data.risk_analysis.confidence * 100).toFixed(1)}%
+                                <br><strong>Raw Response:</strong> ${data.risk_analysis.raw_response}
+                            </div>
+                            
+                            <h4>📄 Analyzed Text:</h4>
+                            <div style="background: white; padding: 15px; border-radius: 5px; border: 1px solid #ccc; white-space: pre-wrap; max-height: 200px; overflow-y: auto;">${data.text}</div>
+                            
+                            <p style="margin-top: 15px; font-size: 12px; color: #666;">
+                                <strong>Analysis Server:</strong> ${data.metadata?.llama_server}<br>
+                                <strong>Timestamp:</strong> ${new Date(data.metadata?.analysis_timestamp).toLocaleString()}
+                            </p>
+                        </div>
+                    `;
+                } else {
+                    riskResultDiv.innerHTML = `
+                        <div class="result error">
+                            <h3>❌ Risk Analysis Failed</h3>
+                            <p><strong>Error:</strong> ${data.error || data.message || 'Unknown error'}</p>
+                            ${data.suggestion ? `<p><strong>Suggestion:</strong> ${data.suggestion}</p>` : ''}
+                        </div>
+                    `;
+                }
+            } catch (error) {
+                riskResultDiv.innerHTML = `
+                    <div class="result error">
+                        <h3>❌ Request Failed</h3>
+                        <p><strong>Error:</strong> ${error.message}</p>
+                        <p>Make sure the API server is running and LlamaEdge server is available.</p>
+                    </div>
+                `;
+            } finally {
+                riskLoadingDiv.style.display = 'none';
+            }
+        });
+
+        // Health check on page load
+        fetch('/health')
+            .then(response => response.json())
+            .then(data => {
+                console.log('API Health:', data);
+                console.log('Note: If you see "ggml_metal_free: deallocating" in server logs, this is normal Metal cleanup behavior.');
+            })
+            .catch(error => {
+                console.error('API Health check failed:', error);
+            });
+    </script>
+</body>
+</html>

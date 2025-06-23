@@ -2,31 +2,188 @@
 
 ## Overview
 
-This is a Rust-based CLI tool that transcribes audio files using the Whisper model through the `rwhisper` crate. The tool outputs results in the exact OpenAI Whisper JSON format for maximum compatibility.
+This is a Rust-based CLI tool and HTTP API server that transcribes audio files using the Whisper model through the `whisper-rs` crate with Metal GPU support. The tool outputs results in the exact OpenAI Whisper JSON format for maximum compatibility.
 
 ## Features
 
 - **OpenAI Whisper Compatible Output**: Generates `result.json` in the exact format used by OpenAI Whisper
+- **HTTP API Server**: RESTful API for uploading and transcribing audio files
+- **Web Interface**: Built-in web interface for easy file uploads and testing
 - **Chunked Processing**: Automatically processes large audio files in 5-minute chunks
+- **GPU/CPU Control**: Choose between GPU acceleration (Metal) or CPU-only mode for stability
 - **Multiple Output Formats**: 
   - `result.json` - OpenAI Whisper format (main output)
   - `[filename]_[timestamp]_log.json` - Detailed processing metadata
   - `[filename]_[timestamp]_transcription.txt` - Human-readable summary
 - **Thai Language Support**: Optimized for Thai audio transcription
 - **Progress Tracking**: Real-time processing status and statistics
+- **Robust Audio Loading**: Supports multiple formats with fallback mechanisms
+
+## Installation
+
+```bash
+# Clone and build
+git clone <repository>
+cd rust-whisper-s2t
+cargo build --release
+```
 
 ## Usage
 
+### CLI Tool (Original)
+
+#### Basic Usage
+
 ```bash
-# Basic usage (Thai language default)
-./target/release/transcribe audio/your_audio.mp3
+# CPU-only mode (default, most stable)
+./target/release/transcribe audio/your_audio.mp3 model/ggml-large-v3.bin
 
-# Specify language explicitly
-./target/release/transcribe audio/your_audio.mp3 th
+# Specify language explicitly (Thai is default)
+./target/release/transcribe audio/your_audio.mp3 model/ggml-large-v3.bin --language th
 
-# Other supported languages
-./target/release/transcribe audio/your_audio.mp3 en
+# English transcription
+./target/release/transcribe audio/your_audio.mp3 model/ggml-large-v3.bin --language en
 ```
+
+#### GPU/CPU Control
+
+```bash
+# CPU-only mode (recommended for stability)
+./target/release/transcribe audio/file.mp3 model/ggml-large-v3.bin --cpu
+
+# GPU mode (faster, but may cause Metal buffer errors)
+./target/release/transcribe audio/file.mp3 model/ggml-large-v3.bin --gpu
+
+# Default mode (CPU-only for stability)
+./target/release/transcribe audio/file.mp3 model/ggml-large-v3.bin
+```
+
+### HTTP API Server (New!)
+
+#### Starting the API Server
+
+```bash
+# Start the API server
+./target/release/api-server model/ggml-large-v3.bin
+
+# Custom host and port
+./target/release/api-server model/ggml-large-v3.bin --host 0.0.0.0 --port 3000
+
+# Core ML model
+./target/release/api-server model/ggml-large-v3-encoder.mlmodelc
+```
+
+#### API Endpoints
+
+1. **POST `/transcribe`** - Upload and transcribe audio
+   - **Body**: Multipart form with audio file
+   - **Query Parameters**:
+     - `language` - Language code (default: "th")
+     - `use_gpu` - Enable GPU acceleration (default: false)
+     - `use_cpu` - Force CPU-only mode (default: false)
+     - `use_coreml` - Enable Core ML acceleration (default: false)
+
+2. **GET `/health`** - Health check
+3. **GET `/languages`** - Get supported languages
+4. **GET `/`** - Web interface for testing
+
+#### API Examples
+
+```bash
+# Basic transcription (Thai)
+curl -X POST http://localhost:8080/transcribe \
+  -F "file=@your_audio.mp3" \
+  -F "language=th"
+
+# English transcription with GPU
+curl -X POST "http://localhost:8080/transcribe?language=en&use_gpu=true" \
+  -F "file=@english_audio.wav"
+
+# Core ML acceleration
+curl -X POST "http://localhost:8080/transcribe?language=th&use_coreml=true" \
+  -F "file=@thai_audio.m4a"
+
+# Health check
+curl http://localhost:8080/health
+
+# Get supported languages
+curl http://localhost:8080/languages
+```
+
+#### Web Interface
+
+Open `http://localhost:8080` in your browser to access the web interface for easy file uploads and testing.
+
+### Command Line Options
+
+#### CLI Tool Options
+
+```bash
+Usage: transcribe [OPTIONS] <audio> <model>
+
+Arguments:
+  <audio>  Path to the audio file to transcribe
+  <model>  Path to the Whisper model file (e.g., ggml-large-v3.bin)
+
+Options:
+  -l, --language <language>  Language code for transcription (default: th for Thai)
+  -g, --gpu                  Enable GPU (Metal) acceleration. WARNING: May cause buffer overlap errors
+  -c, --cpu                  Force CPU-only mode (default for stability)
+      --coreml               Enable Core ML acceleration (for .mlmodelc models)
+  -h, --help                 Print help
+  -V, --version              Print version
+```
+
+#### API Server Options
+
+```bash
+Usage: api-server [OPTIONS] <model>
+
+Arguments:
+  <model>  Path to the Whisper model file (e.g., ggml-large-v3.bin)
+
+Options:
+  -h, --host <host>  Host address to bind the server to [default: 127.0.0.1]
+  -p, --port <port>  Port number to bind the server to [default: 8080]
+      --help         Print help
+  -V, --version      Print version
+```
+
+## Metal Backend Issues & Solutions
+
+### Problem: Buffer Overlap Error
+
+You may encounter this error when using GPU mode:
+```
+ggml_metal_add_buffer: error: buffer 'backend' overlaps with
+```
+
+### Solution: Use CPU Mode
+
+This tool defaults to **CPU-only mode** for maximum stability. This avoids the Metal backend buffer overlap issue entirely.
+
+### Why CPU Mode is Default
+
+1. **Stability**: No Metal buffer errors
+2. **Reliability**: Consistent transcription results  
+3. **Compatibility**: Works on all systems
+4. **Speed**: Still reasonably fast for most audio files
+
+### When to Use GPU Mode
+
+Only use `--gpu` if:
+- You need maximum speed for very large files
+- You're willing to risk buffer overlap errors
+- You want to test if your system handles Metal properly
+
+### Testing Metal Issues
+
+Run the included test script:
+```bash
+./test_metal_issue.sh
+```
+
+This will demonstrate both modes and show you any Metal errors.
 
 ## Output Format
 
