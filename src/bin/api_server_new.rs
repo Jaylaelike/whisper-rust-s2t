@@ -1,4 +1,5 @@
 use actix_web::{web, App, HttpResponse, HttpServer, Result, middleware::Logger, error::ErrorBadRequest};
+use actix_cors::Cors;
 use actix_web_actors::ws;
 use actix_multipart::Multipart;
 use futures_util::TryStreamExt;
@@ -112,10 +113,13 @@ async fn get_supported_languages() -> Result<HttpResponse> {
 // Upload and transcribe endpoint with queue support
 async fn transcribe_handler(
     mut payload: Multipart,
-    query: web::Query<TranscribeRequest>,
     data: web::Data<AppState>,
 ) -> Result<HttpResponse> {
     let mut temp_file: Option<NamedTempFile> = None;
+    let mut language: Option<String> = None;
+    let mut backend: Option<String> = None;
+    let mut priority: Option<i32> = None;
+    let mut risk_analysis: Option<bool> = None;
     let request_id = Uuid::new_v4().to_string();
     
     println!("📤 Processing transcription request: {}", request_id);
@@ -125,22 +129,63 @@ async fn transcribe_handler(
         let content_disposition = field.content_disposition();
         
         if let Some(name) = content_disposition.get_name() {
-            if name == "audio" {
-                if let Some(filename) = content_disposition.get_filename() {
-                    println!("   📁 Received file: {}", filename);
-                    
-                    // Create temporary file
-                    let mut file = NamedTempFile::new()
-                        .map_err(|e| ErrorBadRequest(format!("Failed to create temp file: {}", e)))?;
-                    
-                    // Stream file data
-                    while let Some(chunk) = field.try_next().await? {
-                        file.write_all(&chunk)
-                            .map_err(|e| ErrorBadRequest(format!("Failed to write chunk: {}", e)))?;
+            match name {
+                "audio" => {
+                    if let Some(filename) = content_disposition.get_filename() {
+                        println!("   📁 Received file: {}", filename);
+                        
+                        // Create temporary file
+                        let mut file = NamedTempFile::new()
+                            .map_err(|e| ErrorBadRequest(format!("Failed to create temp file: {}", e)))?;
+                        
+                        // Stream file data
+                        while let Some(chunk) = field.try_next().await? {
+                            file.write_all(&chunk)
+                                .map_err(|e| ErrorBadRequest(format!("Failed to write chunk: {}", e)))?;
+                        }
+                        
+                        temp_file = Some(file);
                     }
-                    
-                    temp_file = Some(file);
-                    break;
+                }
+                "language" => {
+                    let mut bytes = Vec::new();
+                    while let Some(chunk) = field.try_next().await? {
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    language = Some(String::from_utf8_lossy(&bytes).to_string());
+                    println!("   🌍 Language: {:?}", language);
+                }
+                "backend" => {
+                    let mut bytes = Vec::new();
+                    while let Some(chunk) = field.try_next().await? {
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    backend = Some(String::from_utf8_lossy(&bytes).to_string());
+                    println!("   ⚙️ Backend: {:?}", backend);
+                }
+                "priority" => {
+                    let mut bytes = Vec::new();
+                    while let Some(chunk) = field.try_next().await? {
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    if let Ok(priority_str) = String::from_utf8(bytes) {
+                        priority = priority_str.parse().ok();
+                        println!("   🔢 Priority: {:?}", priority);
+                    }
+                }
+                "risk_analysis" => {
+                    let mut bytes = Vec::new();
+                    while let Some(chunk) = field.try_next().await? {
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    if let Ok(risk_str) = String::from_utf8(bytes) {
+                        risk_analysis = risk_str.parse().ok();
+                        println!("   🛡️ Risk analysis: {:?}", risk_analysis);
+                    }
+                }
+                _ => {
+                    // Skip unknown fields
+                    while let Some(_chunk) = field.try_next().await? {}
                 }
             }
         }
@@ -149,23 +194,37 @@ async fn transcribe_handler(
     let temp_file = temp_file.ok_or_else(|| ErrorBadRequest("No audio file found in request"))?;
     let temp_path = temp_file.path().to_string_lossy().to_string();
     
+    // Validate backend selection
+    let backend_str = match backend.as_deref() {
+        Some("cpu") => "cpu",
+        Some("gpu") => "gpu", 
+        Some("coreml") => "coreml",
+        Some("auto") | None => "auto",
+        Some(other) => {
+            println!("   ⚠️ Unknown backend '{}', defaulting to 'auto'", other);
+            "auto"
+        }
+    };
+    
+    println!("   🎯 Selected backend: {}", backend_str);
+    
     // Prepare task payload
     let task_payload = json!({
         "file_path": temp_path,
-        "backend": query.backend.as_deref().unwrap_or("auto"),
-        "language": query.language.as_deref(),
-        "risk_analysis": query.risk_analysis.unwrap_or(false),
+        "backend": backend_str,
+        "language": language,
+        "risk_analysis": risk_analysis.unwrap_or(false),
         "request_id": request_id
     });
     
     // Submit to queue
     let task_type = TaskType::Transcription;
-    let priority = query.priority.unwrap_or(0);
+    let task_priority = priority.unwrap_or(0);
     
     match data.task_queue.send(SubmitTask {
         task_type,
         payload: task_payload,
-        priority: Some(priority),
+        priority: Some(task_priority),
     }).await {
         Ok(Ok(task_id)) => {
             println!("   ✅ Task queued with ID: {}", task_id);
@@ -365,6 +424,32 @@ async fn get_task_history(
     }
 }
 
+// Clean up stale tasks endpoint
+async fn cleanup_stale_tasks(data: web::Data<AppState>) -> Result<HttpResponse> {
+    match data.task_queue.send(CleanupStaleTasks).await {
+        Ok(Ok(cleaned_count)) => {
+            println!("🧹 Cleaned up {} stale tasks", cleaned_count);
+            Ok(HttpResponse::Ok().json(json!({
+                "message": "Stale tasks cleaned up successfully",
+                "cleaned_count": cleaned_count,
+                "timestamp": chrono::Utc::now()
+            })))
+        }
+        Ok(Err(e)) => {
+            Ok(HttpResponse::InternalServerError().json(json!({
+                "error": "Failed to cleanup stale tasks",
+                "details": e
+            })))
+        }
+        Err(e) => {
+            Ok(HttpResponse::InternalServerError().json(json!({
+                "error": "Queue communication error",
+                "details": e.to_string()
+            })))
+        }
+    }
+}
+
 // WebSocket endpoint for real-time updates
 async fn websocket_handler(
     req: actix_web::HttpRequest,
@@ -414,7 +499,6 @@ async fn main() -> std::io::Result<()> {
         )
         .arg(
             Arg::new("host")
-                .short('h')
                 .long("host")
                 .help("Host to bind the server to")
                 .default_value("127.0.0.1"),
@@ -471,11 +555,15 @@ async fn main() -> std::io::Result<()> {
     println!("      GET  /api/task/:id/status  - Get task status");
     println!("      GET  /api/queue/stats      - Queue statistics");
     println!("      GET  /api/queue/history    - Task history");
+    println!("      POST /api/queue/cleanup    - Clean up stale tasks");
     println!("      WS   /ws                   - Real-time updates");
     
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(app_state.clone()))
+            .wrap(
+                Cors::permissive()
+            )
             .wrap(Logger::default())
             .route("/", web::get().to(serve_static))
             .route("/api/health", web::get().to(health_check))
@@ -485,6 +573,7 @@ async fn main() -> std::io::Result<()> {
             .route("/api/task/{id}/status", web::get().to(get_task_status))
             .route("/api/queue/stats", web::get().to(get_queue_stats))
             .route("/api/queue/history", web::get().to(get_task_history))
+            .route("/api/queue/cleanup", web::post().to(cleanup_stale_tasks))
             .route("/ws", web::get().to(websocket_handler))
     })
     .bind(format!("{}:{}", host, port))?

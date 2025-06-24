@@ -1,0 +1,80 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// Queue tasks - temporary records for active processing
+model QueueTask {
+  id                    String    @id @default(cuid())
+  taskId                String?   @unique // Backend task ID (optional initially)
+  title                 String
+  description           String?
+  originalAudioFileName String    // Full path to uploaded audio file
+  
+  // Processing details
+  backend               String    @default("cpu") // "cpu", "gpu", "coreml", "auto"
+  language              String    @default("th") // "th", "en", "auto"
+  priority              Int       @default(0) // Queue priority
+  status                String    @default("pending") // "pending", "processing", "completed", "failed", "cancelled"
+  
+  // Progress tracking
+  progress              Float?    // 0.0 to 1.0
+  errorMessage          String?   // Error details if processing failed
+  
+  // Metadata
+  fileSizeBytes         Int?      // Original file size
+  
+  // Timestamps
+  startedAt             DateTime? // When processing started
+  completedAt           DateTime? // When processing completed
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  
+  @@index([taskId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+// Transcriptions - permanent records of completed work
+model Transcription {
+  id                      String    @id @default(cuid())
+  title                   String
+  description             String?
+  originalAudioFileName   String    // Full path to uploaded audio file
+  
+  // Processing details (for reference)
+  backend                 String    // "cpu", "gpu", "coreml", "auto"
+  language                String    // "th", "en", "auto"
+  
+  // Results
+  transcriptionResultJson Json      // Full transcription result with segments
+  transcriptionText       String    // Extracted text for quick access
+  processingTimeMs        Int?      // Processing time in milliseconds
+  
+  // Risk Analysis
+  riskDetectionStatus     String    @default("not_analyzed") // "not_analyzed", "analyzing", "completed", "failed"
+  riskDetectionResult     String?   // "risky", "safe", "unknown"
+  riskDetectionResponse   Json?     // Full risk analysis response
+  riskAnalyzedAt          DateTime? // When risk analysis was completed
+  riskConfidence          Float?    // Risk detection confidence score
+  
+  // Metadata
+  fileSizeBytes           Int?      // Original file size
+  durationSeconds         Float?    // Audio duration
+  audioSampleRate         Int?      // Sample rate of the audio
+  
+  // Timestamps
+  completedAt             DateTime  // When transcription was completed
+  createdAt               DateTime  @default(now())
+  updatedAt               DateTime  @updatedAt
+  
+  @@index([createdAt])
+  @@index([riskDetectionResult])
+}

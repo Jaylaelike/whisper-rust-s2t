@@ -9,6 +9,9 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 
+// Import the transcribe function from lib
+use crate::transcribe_audio_file as lib_transcribe_audio_file;
+
 // Custom error type that is Send + Sync
 #[derive(Debug)]
 pub struct QueueError(pub String);
@@ -110,6 +113,10 @@ pub struct GetTaskHistory {
     pub limit: Option<usize>,
     pub status_filter: Option<TaskStatus>,
 }
+
+#[derive(Message)]
+#[rtype(result = "Result<usize, String>")]
+pub struct CleanupStaleTasks;
 
 pub struct TaskQueue {
     redis_manager: ConnectionManager,
@@ -269,6 +276,7 @@ impl TaskQueue {
     pub async fn start_task_processor(&self) {
         let queue_clone = self.clone();
         
+        // Start main task processor
         tokio::spawn(async move {
             loop {
                 match queue_clone.process_next_task().await {
@@ -282,6 +290,23 @@ impl TaskQueue {
                         log::error!("Error processing task: {}", e);
                         tokio::time::sleep(tokio::time::Duration::from_millis(5000)).await;
                     }
+                }
+            }
+        });
+        
+        // Start periodic stats broadcaster
+        let stats_queue_clone = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                if let Ok(Ok(stats)) = stats_queue_clone.get_queue_stats_internal().await {
+                    let stats_msg = serde_json::json!({
+                        "type": "queue_stats_update",
+                        "stats": stats,
+                        "timestamp": Utc::now()
+                    });
+                    stats_queue_clone.broadcast_to_websockets(&stats_msg.to_string()).await;
                 }
             }
         });
@@ -305,7 +330,9 @@ impl TaskQueue {
                     "type": "task_status_update",
                     "task_id": task_result.id,
                     "status": task_result.status,
-                    "progress": task_result.progress
+                    "progress": task_result.progress,
+                    "message": "Task processing started",
+                    "timestamp": Utc::now()
                 });
                 self.broadcast_to_websockets(&status_msg.to_string()).await;
                 
@@ -337,22 +364,66 @@ impl TaskQueue {
         let request_key = format!("task_request:{}", task_id);
         let request_data: Result<String, redis::RedisError> = conn.get(&request_key).await;
         
-        let result = if let Ok(request_data) = request_data {
+        let (result, original_request) = if let Ok(request_data) = request_data {
             if let Ok(request) = serde_json::from_str::<TaskRequest>(&request_data) {
-                self.process_task(&request, &mut task_result).await
+                let process_result = self.process_task(&request, &mut task_result).await;
+                (process_result, Some(request))
             } else {
-                Err("Failed to parse task request".to_string())
+                (Err("Failed to parse task request".to_string()), None)
             }
         } else {
-            Err("Task request not found".to_string())
+            (Err("Task request not found".to_string()), None)
         };
         
         // Update final status
         match result {
             Ok(result_data) => {
                 task_result.status = TaskStatus::Completed;
-                task_result.result = Some(result_data);
+                task_result.result = Some(result_data.clone());
                 task_result.progress = 100.0;
+                
+                // Auto-trigger risk analysis for completed transcription tasks
+                if let Some(request) = &original_request {
+                    if matches!(request.task_type, TaskType::Transcription) {
+                        log::info!("Transcription completed, auto-triggering risk analysis for task: {}", task_id);
+                        
+                        // Submit risk analysis in the background (don't block completion)
+                        let queue_clone = self.clone();
+                        let result_clone = result_data.clone();
+                        let payload_clone = request.payload.clone();
+                        let task_id_clone = task_id.clone();
+                        
+                        tokio::spawn(async move {
+                            match queue_clone.auto_submit_risk_analysis(&result_clone, &payload_clone).await {
+                                Ok(risk_task_id) => {
+                                    log::info!("Successfully auto-submitted risk analysis {} for transcription {}", risk_task_id, task_id_clone);
+                                    
+                                    // Broadcast that risk analysis was auto-triggered
+                                    let risk_msg = serde_json::json!({
+                                        "type": "auto_risk_analysis_triggered",
+                                        "transcription_task_id": task_id_clone,
+                                        "risk_analysis_task_id": risk_task_id,
+                                        "message": "Risk analysis automatically triggered for completed transcription",
+                                        "timestamp": Utc::now()
+                                    });
+                                    queue_clone.broadcast_to_websockets(&risk_msg.to_string()).await;
+                                }
+                                Err(e) => {
+                                    log::error!("Failed to auto-submit risk analysis for task {}: {}", task_id_clone, e);
+                                    
+                                    // Broadcast failure
+                                    let error_msg = serde_json::json!({
+                                        "type": "auto_risk_analysis_failed",
+                                        "transcription_task_id": task_id_clone,
+                                        "error": e,
+                                        "timestamp": Utc::now()
+                                    });
+                                    queue_clone.broadcast_to_websockets(&error_msg.to_string()).await;
+                                }
+                            }
+                        });
+                    }
+                }
             }
             Err(error) => {
                 task_result.status = TaskStatus::Failed;
@@ -381,7 +452,11 @@ impl TaskQueue {
             "task_id": task_result.id,
             "status": task_result.status,
             "result": task_result.result,
-            "error": task_result.error
+            "error": task_result.error,
+            "processing_time_ms": task_result.completed_at
+                .zip(task_result.started_at)
+                .map(|(completed, started)| (completed - started).num_milliseconds()),
+            "timestamp": Utc::now()
         });
         self.broadcast_to_websockets(&status_msg.to_string()).await;
     }
@@ -410,26 +485,36 @@ impl TaskQueue {
         let language = payload.get("language")
             .and_then(|v| v.as_str());
         
-        // Update progress
-        task_result.progress = 10.0;
+        // Update progress and broadcast - Audio file loaded
+        task_result.progress = 5.0;
         let _ = self.save_task_result(task_result).await;
-        
-        // Broadcast progress update
         let progress_msg = serde_json::json!({
             "type": "task_progress",
             "task_id": task_result.id,
-            "progress": task_result.progress
+            "progress": task_result.progress,
+            "message": "Audio file loaded and validated"
         });
         self.broadcast_to_websockets(&progress_msg.to_string()).await;
         
-        // Update progress before starting heavy computation
+        // Update progress - Preprocessing audio
+        task_result.progress = 10.0;
+        let _ = self.save_task_result(task_result).await;
+        let progress_msg = serde_json::json!({
+            "type": "task_progress",
+            "task_id": task_result.id,
+            "progress": task_result.progress,
+            "message": "Preprocessing audio file"
+        });
+        self.broadcast_to_websockets(&progress_msg.to_string()).await;
+
+        // Update progress - Initializing transcription model
         task_result.progress = 20.0;
         let _ = self.save_task_result(task_result).await;
-        
         let progress_msg = serde_json::json!({
             "type": "task_progress", 
             "task_id": task_result.id,
-            "progress": task_result.progress
+            "progress": task_result.progress,
+            "message": "Initializing transcription model"
         });
         self.broadcast_to_websockets(&progress_msg.to_string()).await;
         
@@ -448,7 +533,7 @@ impl TaskQueue {
             // Create a new Tokio runtime for this thread
             let rt = tokio::runtime::Runtime::new().unwrap();
             let result = rt.block_on(async {
-                crate::transcribe_audio_file(&file_path_owned, language_owned.as_deref(), &backend_owned).await
+                lib_transcribe_audio_file(&file_path_owned, language_owned.as_deref(), &backend_owned).await
             });
             
             // Send result back
@@ -457,18 +542,41 @@ impl TaskQueue {
             });
         });
         
+        // Update progress - Starting transcription
+        task_result.progress = 30.0;
+        let _ = self.save_task_result(task_result).await;
+        let progress_msg = serde_json::json!({
+            "type": "task_progress",
+            "task_id": task_result.id,
+            "progress": task_result.progress,
+            "message": "Starting transcription process"
+        });
+        self.broadcast_to_websockets(&progress_msg.to_string()).await;
+
         // Wait for result while periodically updating progress and allowing other tasks to run
-        let mut progress = 30.0f64;
-        let progress_increment = 60.0f64 / 30.0f64; // Spread remaining 60% over ~30 seconds max
+        let mut progress = 35.0f64;
+        let max_wait_time = 300; // 5 minutes max
+        let mut elapsed_seconds = 0;
         
         loop {
             // Check if we have a result (non-blocking)
-            match tokio::time::timeout(tokio::time::Duration::from_secs(1), rx.recv()).await {
+            match tokio::time::timeout(tokio::time::Duration::from_secs(2), rx.recv()).await {
                 Ok(Some(result)) => {
                     // Got the result
                     match result {
                         Ok(transcription_result) => {
-                            task_result.progress = 100.0;
+                            // Final progress update
+                            task_result.progress = 95.0;
+                            let _ = self.save_task_result(task_result).await;
+                            let progress_msg = serde_json::json!({
+                                "type": "task_progress",
+                                "task_id": task_result.id,
+                                "progress": task_result.progress,
+                                "message": "Finalizing transcription"
+                            });
+                            self.broadcast_to_websockets(&progress_msg.to_string()).await;
+                            
+            task_result.progress = 100.0;
                             return Ok(transcription_result);
                         }
                         Err(e) => {
@@ -482,21 +590,43 @@ impl TaskQueue {
                 }
                 Err(_) => {
                     // Timeout - continue waiting but update progress
-                    progress = (progress + progress_increment).min(90.0);
+                    elapsed_seconds += 2;
                     
-                    // Update progress in Redis
-                    if let Ok(mut current_task) = self.get_task_result(&task_id).await {
-                        if let Some(ref mut task) = current_task {
-                            task.progress = progress as f32;
-                            let _ = self.save_task_result(task).await;
-                            
-                            // Broadcast progress update
-                            let progress_msg = serde_json::json!({
-                                "type": "task_progress",
-                                "task_id": task_id,
-                                "progress": progress as f32
-                            });
-                            self.broadcast_to_websockets(&progress_msg.to_string()).await;
+                    // Check if we've exceeded max wait time
+                    if elapsed_seconds > max_wait_time {
+                        return Err("Transcription timed out after 5 minutes".to_string());
+                    }
+                    
+                    // Calculate progress based on time elapsed (smoother progression)
+                    let time_progress = (elapsed_seconds as f64 / max_wait_time as f64) * 50.0; // 50% for time-based progress
+                    progress = (35.0 + time_progress).min(90.0);
+                    
+                    // Update progress every 10 seconds or at major milestones
+                    if elapsed_seconds % 10 == 0 || progress as i32 % 15 == 0 {
+                        // Update progress in Redis
+                        if let Ok(mut current_task) = self.get_task_result(&task_id).await {
+                            if let Some(ref mut task) = current_task {
+                                task.progress = progress as f32;
+                                let _ = self.save_task_result(task).await;
+                                
+                                // Broadcast progress update with contextual message
+                                let message = match progress as i32 {
+                                    35..=50 => "Processing audio segments",
+                                    51..=70 => "Running speech recognition",
+                                    71..=85 => "Post-processing results",
+                                    86..=90 => "Preparing final output",
+                                    _ => "Transcribing audio"
+                                };
+                                
+                                let progress_msg = serde_json::json!({
+                                    "type": "task_progress",
+                                    "task_id": task_id,
+                                    "progress": progress as f32,
+                                    "message": message,
+                                    "elapsed_seconds": elapsed_seconds
+                                });
+                                self.broadcast_to_websockets(&progress_msg.to_string()).await;
+                            }
                         }
                     }
                     
@@ -505,6 +635,88 @@ impl TaskQueue {
                 }
             }
         }
+    }
+    
+    async fn get_queue_stats_internal(&self) -> Result<Result<QueueStats, String>, String> {
+        let task_results = self.task_results.read().await;
+        
+        let mut pending_count = 0;
+        let mut processing_count = 0;
+        let mut completed_count = 0;
+        let mut failed_count = 0;
+        
+        for task in task_results.values() {
+            match task.status {
+                TaskStatus::Pending => pending_count += 1,
+                TaskStatus::Processing => processing_count += 1,
+                TaskStatus::Completed => completed_count += 1,
+                TaskStatus::Failed => failed_count += 1,
+                TaskStatus::Cancelled => failed_count += 1,
+            }
+        }
+        
+        // Also count queued tasks
+        let mut conn = self.redis_manager.clone();
+        let queue_size: usize = conn.zcard("task_queue").await.unwrap_or(0);
+        pending_count += queue_size;
+        
+        let total_tasks = task_results.len();
+        
+        Ok(Ok(QueueStats {
+            pending_count,
+            processing_count,
+            completed_count,
+            failed_count,
+            total_tasks,
+        }))
+    }
+    
+    pub async fn cleanup_stale_tasks(&self) -> Result<usize, QueueError> {
+        let now = Utc::now();
+        let stale_threshold = chrono::Duration::hours(1); // Consider tasks stale after 1 hour
+        
+        let mut task_results = self.task_results.write().await;
+        let mut cleaned_count = 0;
+        
+        let stale_tasks: Vec<String> = task_results
+            .values()
+            .filter(|task| {
+                matches!(task.status, TaskStatus::Processing) &&
+                task.started_at.map_or(false, |started| now - started > stale_threshold)
+            })
+            .map(|task| task.id.clone())
+            .collect();
+        
+        for task_id in stale_tasks {
+            if let Some(mut task) = task_results.get(&task_id).cloned() {
+                log::warn!("Cleaning up stale task: {}", task_id);
+                
+                task.status = TaskStatus::Failed;
+                task.error = Some("Task timed out and was cleaned up".to_string());
+                task.completed_at = Some(now);
+                task.updated_at = now;
+                
+                // Save to Redis
+                let _ = self.save_task_result(&task).await;
+                
+                // Update in-memory cache
+                task_results.insert(task_id.clone(), task.clone());
+                
+                // Broadcast task failure
+                let status_msg = serde_json::json!({
+                    "type": "task_completed",
+                    "task_id": task_id,
+                    "status": "failed",
+                    "error": "Task timed out and was cleaned up",
+                    "timestamp": now
+                });
+                self.broadcast_to_websockets(&status_msg.to_string()).await;
+                
+                cleaned_count += 1;
+            }
+        }
+        
+        Ok(cleaned_count)
     }
     
     async fn process_risk_analysis_task(&self, payload: &serde_json::Value, task_result: &mut TaskResult) -> Result<serde_json::Value, String> {
@@ -528,12 +740,158 @@ impl TaskQueue {
         match crate::analyze_risk(text).await {
             Ok(result) => {
                 task_result.progress = 100.0;
+                
+                // If this is an auto-triggered analysis, update the database
+                if payload.get("auto_triggered").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    self.update_transcription_risk_result(&result, payload).await;
+                }
+                
                 Ok(result)
             }
             Err(e) => {
+                // If this is an auto-triggered analysis that failed, update status
+                if payload.get("auto_triggered").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    let error_payload = serde_json::json!({
+                        "riskDetectionStatus": "failed",
+                        "original_file": payload.get("original_file"),
+                        "taskId": task_result.id,
+                        "auto_triggered": true
+                    });
+                    self.update_transcription_risk_result(&error_payload, payload).await;
+                }
+                
                 Err(format!("Risk analysis failed: {}", e))
             }
         }
+    }
+
+    // Update transcription in database with risk analysis results
+    async fn update_transcription_risk_result(&self, risk_result: &serde_json::Value, original_payload: &serde_json::Value) {
+        // Extract data from the risk analysis result
+        let update_payload = if risk_result.get("risk_analysis").is_some() {
+            // Successful risk analysis
+            let risk_analysis = &risk_result["risk_analysis"];
+            serde_json::json!({
+                "riskDetectionStatus": "completed",
+                "riskDetectionResult": if risk_analysis["is_risky"].as_bool().unwrap_or(false) { "risky" } else { "safe" },
+                "riskDetectionResponse": risk_result,
+                "riskConfidence": risk_analysis["confidence"].as_f64().unwrap_or(0.0),
+                "original_file": original_payload.get("original_file"),
+                "transcription_text": risk_result.get("text"),
+                "auto_triggered": true
+            })
+        } else {
+            // Failed risk analysis or status update
+            risk_result.clone()
+        };
+        
+        // Call the frontend API to update the database
+        let client = reqwest::Client::new();
+        match client
+            .put("http://localhost:3000/api/transcriptions-new/update-risk")
+            .json(&update_payload)
+            .send()
+            .await
+        {
+            Ok(response) => {
+                if response.status().is_success() {
+                    log::info!("Successfully updated transcription with risk analysis results");
+                } else {
+                    let status = response.status();
+                    let error_text = response.text().await.unwrap_or_default();
+                    log::error!("Failed to update transcription database: {} - {}", status, error_text);
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to call transcription update API: {}", e);
+            }
+        }
+    }
+
+    // Auto-submit risk analysis after transcription completion
+    async fn auto_submit_risk_analysis(&self, transcription_result: &serde_json::Value, original_payload: &serde_json::Value) -> Result<String, String> {
+        // Extract the transcription text
+        let text = transcription_result
+            .get("text")
+            .and_then(|v| v.as_str())
+            .ok_or("No text found in transcription result")?;
+        
+        // Skip risk analysis if text is empty or too short
+        if text.trim().is_empty() || text.trim().len() < 10 {
+            log::info!("Skipping risk analysis for short/empty text");
+            return Ok("skipped".to_string());
+        }
+        
+        log::info!("Auto-submitting risk analysis for transcription text (length: {})", text.len());
+        
+        // Create risk analysis payload
+        let risk_payload = serde_json::json!({
+            "text": text,
+            "auto_triggered": true,
+            "source_type": "transcription",
+            "original_file": original_payload.get("file_path"),
+            "transcription_backend": original_payload.get("backend"),
+            "language": original_payload.get("language")
+        });
+        
+        // Create task directly (internal method)
+        self.submit_task_internal(TaskType::RiskAnalysis, risk_payload, Some(2)).await
+    }
+
+    // Internal method to submit tasks without going through the actor system
+    async fn submit_task_internal(&self, task_type: TaskType, payload: serde_json::Value, priority: Option<i32>) -> Result<String, String> {
+        let task_id = Uuid::new_v4().to_string();
+        let now = Utc::now();
+        
+        let task_request = TaskRequest {
+            id: task_id.clone(),
+            task_type: task_type.clone(),
+            created_at: now,
+            updated_at: now,
+            priority: priority.unwrap_or(0),
+            payload,
+        };
+        
+        let task_result = TaskResult {
+            id: task_id.clone(),
+            status: TaskStatus::Pending,
+            created_at: now,
+            updated_at: now,
+            started_at: None,
+            completed_at: None,
+            result: None,
+            error: None,
+            progress: 0.0,
+        };
+        
+        // Save task request and result
+        let mut conn = self.redis_manager.clone();
+        let request_key = format!("task_request:{}", task_id);
+        let request_data = serde_json::to_string(&task_request)
+            .map_err(|e| format!("Failed to serialize task request: {}", e))?;
+        
+        conn.set::<_, _, ()>(&request_key, request_data).await
+            .map_err(|e| format!("Failed to save task request: {}", e))?;
+        
+        self.save_task_result(&task_result).await
+            .map_err(|e| format!("Failed to save task result: {}", e))?;
+        
+        // Add to queue
+        self.enqueue_task_request(&task_id).await
+            .map_err(|e| format!("Failed to enqueue task: {}", e))?;
+        
+        // Broadcast new task
+        let new_task_msg = serde_json::json!({
+            "type": "new_task",
+            "task_id": task_id,
+            "task_type": task_request.task_type,
+            "status": task_result.status,
+            "priority": task_request.priority,
+            "timestamp": Utc::now()
+        });
+        self.broadcast_to_websockets(&new_task_msg.to_string()).await;
+        
+        Ok(task_id)
     }
 }
 
@@ -608,7 +966,9 @@ impl Handler<SubmitTask> for TaskQueue {
                 "type": "new_task",
                 "task_id": task_id,
                 "task_type": task_request.task_type,
-                "status": task_result.status
+                "status": task_result.status,
+                "priority": task_request.priority,
+                "timestamp": Utc::now()
             });
             queue_clone.broadcast_to_websockets(&new_task_msg.to_string()).await;
             
@@ -790,6 +1150,19 @@ impl Handler<RemoveWebSocketSession> for TaskQueue {
         Box::pin(async move {
             let mut sessions = websocket_sessions.lock().await;
             sessions.remove(&msg.session_id);
+        }.into_actor(self))
+    }
+}
+
+impl Handler<CleanupStaleTasks> for TaskQueue {
+    type Result = ResponseActFuture<Self, Result<usize, String>>;
+    
+    fn handle(&mut self, _msg: CleanupStaleTasks, _ctx: &mut Self::Context) -> Self::Result {
+        let queue_clone = self.clone();
+        
+        Box::pin(async move {
+            queue_clone.cleanup_stale_tasks().await
+                .map_err(|e| e.to_string())
         }.into_actor(self))
     }
 }
