@@ -48,21 +48,21 @@ export function SystemStatusIndicator() {
       {status.backendOnline ? (
         <>
           {isActive ? (
-            <Badge variant="secondary" className="gap-1">
+            <Badge className="status-processing gap-2 px-3 py-1 animate-pulse-glow">
               <Loader2 className="h-3 w-3 animate-spin" />
-              {status.activeTasks + status.queueLength} tasks
+              <span className="font-medium">{status.activeTasks + status.queueLength} tasks</span>
             </Badge>
           ) : (
-            <Badge variant="outline" className="gap-1">
-              <div className="h-2 w-2 bg-green-500 rounded-full"></div>
-              Ready
+            <Badge className="status-completed gap-2 px-3 py-1">
+              <div className="h-2 w-2 bg-green-500 rounded-full animate-pulse-glow"></div>
+              <span className="font-medium">Ready</span>
             </Badge>
           )}
         </>
       ) : (
-        <Badge variant="destructive" className="gap-1">
+        <Badge className="status-failed gap-2 px-3 py-1 animate-pulse">
           <div className="h-2 w-2 bg-white rounded-full"></div>
-          Offline
+          <span className="font-medium">Offline</span>
         </Badge>
       )}
     </div>

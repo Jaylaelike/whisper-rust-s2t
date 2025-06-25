@@ -31,7 +31,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={kanit.className} suppressHydrationWarning>
+      <body className={`${kanit.className} antialiased`} suppressHydrationWarning>
         <Providers>
           <LoadingProvider>
             <ThemeProvider
@@ -41,8 +41,23 @@ export default function RootLayout({
               disableTransitionOnChange
             >
               <AppWithSplash>
-                <Navbar />
-                <main className="container mx-auto py-6 px-4">{children}</main>
+                {/* Background gradient overlay */}
+                <div className="fixed inset-0 -z-10 bg-gradient-to-br from-background via-background to-muted/10" />
+                <div className="fixed inset-0 -z-10 bg-grid-pattern opacity-[0.02]" />
+                
+                <div className="relative min-h-screen flex flex-col">
+                  <Navbar />
+                  <main className="flex-1 container mx-auto py-6 px-4 animate-fade-in">
+                    {children}
+                  </main>
+                  
+                  {/* Subtle footer */}
+                  <footer className="border-t border-border/40 bg-muted/20 py-4">
+                    <div className="container mx-auto px-4 text-center text-sm text-muted-foreground">
+                      <p>© 2024 RRS Audio Transcriber. Powered by Whisper AI</p>
+                    </div>
+                  </footer>
+                </div>
               </AppWithSplash>
             </ThemeProvider>
           </LoadingProvider>

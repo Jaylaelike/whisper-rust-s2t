@@ -122,46 +122,96 @@ export function NotificationCenter() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative">
+        <Button variant="ghost" size="icon" className="relative btn-enhanced hover:bg-muted/50 transition-all duration-200">
           <Bell className="h-5 w-5" />
           {unreadCount > 0 && (
-            <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-destructive text-xs text-white">
+            <span className="absolute -top-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-gradient-to-r from-red-500 to-pink-500 text-xs text-white font-semibold animate-pulse shadow-colored-error">
               {unreadCount}
             </span>
           )}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-80">
-        <DropdownMenuLabel className="flex items-center justify-between">
-          <span>Notifications</span>
+      <DropdownMenuContent align="end" className="w-80 card-enhanced border-0 shadow-2xl bg-background/95 backdrop-blur-xl">
+        <DropdownMenuLabel className="flex items-center justify-between p-4 border-b border-border/50 bg-muted/20">
+          <div className="flex items-center gap-2">
+            <Bell className="h-4 w-4 text-primary" />
+            <span className="font-semibold">Notifications</span>
+            {unreadCount > 0 && (
+              <Badge variant="secondary" className="text-xs bg-primary/10 text-primary">
+                {unreadCount} new
+              </Badge>
+            )}
+          </div>
           {unreadCount > 0 && (
-            <Button variant="ghost" size="sm" onClick={markAllAsRead} className="h-auto py-1 px-2 text-xs">
-              Mark all as read
+            <Button 
+              variant="ghost" 
+              size="sm" 
+              onClick={markAllAsRead} 
+              className="h-auto py-1 px-2 text-xs btn-enhanced hover:bg-primary/10 hover:text-primary"
+            >
+              Mark all read
             </Button>
           )}
         </DropdownMenuLabel>
         <DropdownMenuSeparator />
         {notifications.length === 0 ? (
-          <div className="py-4 text-center text-sm text-muted-foreground">No notifications</div>
+          <div className="py-8 text-center">
+            <div className="flex flex-col items-center gap-2">
+              <div className="p-3 rounded-full bg-muted/50">
+                <Bell className="h-6 w-6 text-muted-foreground" />
+              </div>
+              <p className="text-sm text-muted-foreground">No notifications</p>
+              <p className="text-xs text-muted-foreground/60">You're all caught up!</p>
+            </div>
+          </div>
         ) : (
-          notifications.map((notification) => (
-            <DropdownMenuItem key={notification.id} className="cursor-pointer" asChild>
-              <Link href={`/transcriptions/${notification.jobId}`} onClick={() => markAsRead(notification.id)}>
-                <div className={`flex flex-col gap-1 w-full ${notification.read ? "opacity-70" : ""}`}>
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">{notification.title}</span>
-                    <Badge variant={getStatusColor(notification.status)} className="text-xs">
-                      {notification.status}
-                    </Badge>
+          <div className="max-h-96 overflow-y-auto">
+            {notifications.map((notification, index) => (
+              <DropdownMenuItem 
+                key={notification.id} 
+                className="cursor-pointer p-0 focus:bg-muted/30" 
+                asChild
+              >
+                <Link 
+                  href={`/transcriptions/${notification.jobId}`} 
+                  onClick={() => markAsRead(notification.id)}
+                  className="block"
+                >
+                  <div className={`p-4 border-b border-border/30 transition-all duration-200 hover:bg-muted/20 ${
+                    notification.read ? "opacity-60" : "bg-primary/5"
+                  } ${index === 0 ? "animate-fade-in" : ""}`}>
+                    <div className="flex items-start justify-between mb-2">
+                      <span className="font-medium text-sm text-foreground">{notification.title}</span>
+                      <div className="flex items-center gap-2">
+                        <Badge 
+                          variant={getStatusColor(notification.status)} 
+                          className={`text-xs ${
+                            notification.status === 'completed' ? 'status-completed' :
+                            notification.status === 'processing' ? 'status-processing' :
+                            notification.status === 'failed' ? 'status-failed' : 'status-pending'
+                          }`}
+                        >
+                          {notification.status}
+                        </Badge>
+                        {!notification.read && (
+                          <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+                        )}
+                      </div>
+                    </div>
+                    <p className="text-sm text-muted-foreground mb-2 line-clamp-2">{notification.message}</p>
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground/80">
+                        {new Date(notification.timestamp).toLocaleTimeString()}
+                      </span>
+                      <span className="text-xs text-primary/60 hover:text-primary transition-colors duration-200">
+                        View details →
+                      </span>
+                    </div>
                   </div>
-                  <p className="text-sm text-muted-foreground">{notification.message}</p>
-                  <span className="text-xs text-muted-foreground">
-                    {new Date(notification.timestamp).toLocaleTimeString()}
-                  </span>
-                </div>
-              </Link>
-            </DropdownMenuItem>
-          ))
+                </Link>
+              </DropdownMenuItem>
+            ))}
+          </div>
         )}
       </DropdownMenuContent>
     </DropdownMenu>

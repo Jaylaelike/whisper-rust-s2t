@@ -152,3 +152,47 @@ export async function PUT(
     )
   }
 }
+
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const id = params.id
+
+    // Check if transcription exists
+    const existingTranscription = await (prisma as any).transcription.findUnique({
+      where: { id }
+    })
+
+    if (!existingTranscription) {
+      return NextResponse.json(
+        { error: "Transcription not found" },
+        { status: 404 }
+      )
+    }
+
+    // Delete the transcription
+    await (prisma as any).transcription.delete({
+      where: { id }
+    })
+
+    console.log(`🗑️ Deleted transcription ${id}: "${existingTranscription.title}"`)
+
+    return NextResponse.json({ 
+      success: true,
+      message: "Transcription deleted successfully",
+      id: id,
+      title: existingTranscription.title
+    })
+  } catch (error) {
+    console.error("Error deleting transcription:", error)
+    return NextResponse.json(
+      { 
+        error: "Failed to delete transcription",
+        details: error instanceof Error ? error.message : String(error)
+      },
+      { status: 500 }
+    )
+  }
+}

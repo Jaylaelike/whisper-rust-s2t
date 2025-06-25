@@ -135,8 +135,10 @@ export function useQueueStatus() {
       }
       return response.json()
     },
-    refetchInterval: 30000, // Reduced to 30 seconds since WebSocket provides real-time updates
-    staleTime: 10000, // Consider data stale after 10 seconds
+    refetchInterval: 60000, // Increased to 60 seconds since WebSocket provides real-time updates
+    staleTime: 30000, // Consider data stale after 30 seconds
+    refetchOnWindowFocus: false, // Disable since we have WebSocket
+    refetchIntervalInBackground: false, // Don't poll in background
   })
 }
 
@@ -153,8 +155,10 @@ export function useQueueTasks(status?: string) {
       }
       return response.json()
     },
-    refetchInterval: 30000, // Reduced to 30 seconds since WebSocket provides real-time updates
-    staleTime: 10000,
+    refetchInterval: 60000, // Increased to 60 seconds since WebSocket provides real-time updates
+    staleTime: 30000,
+    refetchOnWindowFocus: false, // Disable since we have WebSocket
+    refetchIntervalInBackground: false, // Don't poll in background
   })
 }
 
@@ -205,6 +209,32 @@ export function useDeleteQueueTask() {
       // Invalidate queue-related queries
       queryClient.invalidateQueries({ queryKey: queryKeys.queueTasks })
       queryClient.invalidateQueries({ queryKey: queryKeys.queueStatus })
+    },
+  })
+}
+
+// Mutation for deleting transcription
+export function useDeleteTranscription() {
+  const queryClient = useQueryClient()
+  
+  return useMutation({
+    mutationFn: async (transcriptionId: string) => {
+      const response = await fetch(`/api/transcriptions-new/${transcriptionId}`, {
+        method: 'DELETE',
+      })
+      
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to delete transcription')
+      }
+      
+      return response.json()
+    },
+    onSuccess: (data, transcriptionId) => {
+      // Invalidate and refetch transcriptions list
+      queryClient.invalidateQueries({ queryKey: queryKeys.transcriptions })
+      // Remove the specific transcription from cache
+      queryClient.removeQueries({ queryKey: queryKeys.transcription(transcriptionId) })
     },
   })
 }

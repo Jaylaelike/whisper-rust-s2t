@@ -103,30 +103,40 @@ export function UploadFormReactQuery() {
   }
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>Upload Audio for Transcription</CardTitle>
-          <CardDescription>
-            Upload your audio file and configure transcription settings. 
-            Processing will complete synchronously and redirect you to the results.
-          </CardDescription>
+    <div className="max-w-2xl mx-auto space-y-8 animate-slide-up">
+      <Card className="card-enhanced shadow-2xl border-0 bg-gradient-to-br from-white/95 via-white/98 to-white/95 backdrop-blur-xl">
+        <CardHeader className="space-y-4 bg-gradient-to-br from-blue-50/50 via-indigo-50/30 to-purple-50/50 rounded-t-xl border-b border-border/30">
+          <div className="flex items-center gap-3">
+            <div className="p-3 rounded-xl bg-gradient-to-br from-blue-100 to-indigo-100 text-blue-600">
+              <Upload className="h-6 w-6" />
+            </div>
+            <div>
+              <CardTitle className="text-xl bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
+                Upload Audio for Transcription
+              </CardTitle>
+              <CardDescription className="text-muted-foreground/80">
+                Configure your audio transcription with advanced settings for optimal results
+              </CardDescription>
+            </div>
+          </div>
         </CardHeader>
-        <CardContent>
+        
+        <CardContent className="p-8">
           <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-              {/* Title */}
+            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+              {/* Enhanced Title Field */}
               <FormField
                 control={form.control}
                 name="title"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Title</FormLabel>
+                  <FormItem className="space-y-3">
+                    <FormLabel className="text-sm font-semibold text-foreground">Title</FormLabel>
                     <FormControl>
                       <Input 
-                        placeholder="Enter a title for this transcription" 
+                        placeholder="Enter a descriptive title for this transcription" 
                         {...field}
                         disabled={uploadMutation.isPending}
+                        className="input-enhanced h-12 text-base focus-enhanced"
                       />
                     </FormControl>
                     <FormMessage />
@@ -134,18 +144,19 @@ export function UploadFormReactQuery() {
                 )}
               />
 
-              {/* Description */}
+              {/* Enhanced Description Field */}
               <FormField
                 control={form.control}
                 name="description"
                 render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Description (Optional)</FormLabel>
+                  <FormItem className="space-y-3">
+                    <FormLabel className="text-sm font-semibold text-foreground">Description (Optional)</FormLabel>
                     <FormControl>
                       <Textarea
-                        placeholder="Add a description or notes about this audio"
+                        placeholder="Add context, notes, or additional details about this audio..."
                         {...field}
                         disabled={uploadMutation.isPending}
+                        className="input-enhanced min-h-[100px] resize-y focus-enhanced"
                       />
                     </FormControl>
                     <FormMessage />
@@ -153,30 +164,57 @@ export function UploadFormReactQuery() {
                 )}
               />
 
-              {/* Audio File */}
+              {/* Enhanced Audio File Upload */}
               <FormField
                 control={form.control}
                 name="audioFile"
                 render={({ field: { onChange, value, ...field } }) => (
-                  <FormItem>
-                    <FormLabel>Audio File</FormLabel>
+                  <FormItem className="space-y-3">
+                    <FormLabel className="text-sm font-semibold text-foreground">Audio File</FormLabel>
                     <FormControl>
-                      <div className="space-y-2">
-                        <Input
-                          type="file"
-                          accept="audio/*,.mp3,.wav,.m4a"
-                          onChange={(e) => {
-                            onChange(e.target.files)
-                            handleFileChange(e.target.files)
-                          }}
-                          disabled={uploadMutation.isPending}
-                          {...field}
-                        />
+                      <div className="space-y-4">
+                        {/* Custom File Upload Area */}
+                        <div className="relative">
+                          <Input
+                            type="file"
+                            accept="audio/*,.mp3,.wav,.m4a"
+                            onChange={(e) => {
+                              onChange(e.target.files)
+                              handleFileChange(e.target.files)
+                            }}
+                            disabled={uploadMutation.isPending}
+                            className="sr-only"
+                            id="audio-upload"
+                            {...field}
+                          />
+                          <label 
+                            htmlFor="audio-upload"
+                            className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-border/50 rounded-xl cursor-pointer bg-gradient-to-br from-muted/20 to-muted/10 hover:bg-muted/30 hover:border-primary/50 transition-all duration-300 group"
+                          >
+                            <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                              <div className="p-3 rounded-lg bg-primary/10 text-primary group-hover:bg-primary/20 transition-colors duration-300 mb-3">
+                                <FileAudio className="h-8 w-8" />
+                              </div>
+                              <p className="mb-2 text-sm text-foreground font-medium">
+                                <span className="font-semibold">Click to upload</span> or drag and drop
+                              </p>
+                              <p className="text-xs text-muted-foreground">MP3, WAV, M4A (max 100MB)</p>
+                            </div>
+                          </label>
+                        </div>
+                        
+                        {/* Selected File Display */}
                         {selectedFile && (
-                          <div className="flex items-center gap-2 text-sm text-muted-foreground bg-muted p-2 rounded">
-                            <FileAudio className="h-4 w-4" />
-                            <span>{selectedFile.name}</span>
-                            <span>({formatFileSize(selectedFile.size)})</span>
+                          <div className="flex items-center gap-4 p-4 bg-green-50/50 border border-green-200/50 rounded-xl animate-fade-in">
+                            <div className="p-2 rounded-lg bg-green-100 text-green-600">
+                              <CheckCircle className="h-5 w-5" />
+                            </div>
+                            <div className="flex-1">
+                              <div className="font-medium text-green-800">{selectedFile.name}</div>
+                              <div className="text-sm text-green-600">
+                                Size: {formatFileSize(selectedFile.size)} • Type: {selectedFile.type || 'audio/*'}
+                              </div>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -186,125 +224,137 @@ export function UploadFormReactQuery() {
                 )}
               />
 
-              {/* Settings Row */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                {/* Language */}
-                <FormField
-                  control={form.control}
-                  name="language"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Language</FormLabel>
-                      <Select 
-                        onValueChange={field.onChange} 
-                        defaultValue={field.value}
-                        disabled={uploadMutation.isPending}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select language" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="th">Thai (ไทย)</SelectItem>
-                          <SelectItem value="en">English</SelectItem>
-                          <SelectItem value="auto">Auto-detect</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+              {/* Enhanced Settings Grid */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-lg font-semibold text-foreground">Processing Settings</h3>
+                  <div className="h-px flex-1 bg-border/50" />
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {/* Enhanced Language Select */}
+                  <FormField
+                    control={form.control}
+                    name="language"
+                    render={({ field }) => (
+                      <FormItem className="space-y-3">
+                        <FormLabel className="text-sm font-semibold text-foreground">Language</FormLabel>
+                        <Select 
+                          onValueChange={field.onChange} 
+                          defaultValue={field.value}
+                          disabled={uploadMutation.isPending}
+                        >
+                          <FormControl>
+                            <SelectTrigger className="input-enhanced h-12 focus-enhanced">
+                              <SelectValue placeholder="Select language" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="th">🇹🇭 Thai (ไทย)</SelectItem>
+                            <SelectItem value="en">🇺🇸 English</SelectItem>
+                            <SelectItem value="auto">🌐 Auto-detect</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-                {/* Backend */}
-                <FormField
-                  control={form.control}
-                  name="backend"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Processing Backend</FormLabel>
-                      <Select 
-                        onValueChange={field.onChange} 
-                        defaultValue={field.value}
-                        disabled={uploadMutation.isPending}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select backend" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="cpu">CPU</SelectItem>
-                          <SelectItem value="gpu">GPU</SelectItem>
-                          <SelectItem value="coreml">CoreML</SelectItem>
-                          <SelectItem value="auto">Auto</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                  {/* Enhanced Backend Select */}
+                  <FormField
+                    control={form.control}
+                    name="backend"
+                    render={({ field }) => (
+                      <FormItem className="space-y-3">
+                        <FormLabel className="text-sm font-semibold text-foreground">Processing Backend</FormLabel>
+                        <Select 
+                          onValueChange={field.onChange} 
+                          defaultValue={field.value}
+                          disabled={uploadMutation.isPending}
+                        >
+                          <FormControl>
+                            <SelectTrigger className="input-enhanced h-12 focus-enhanced">
+                              <SelectValue placeholder="Select backend" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="cpu">💻 CPU</SelectItem>
+                            <SelectItem value="gpu">⚡ GPU</SelectItem>
+                            <SelectItem value="coreml">🍎 CoreML</SelectItem>
+                            <SelectItem value="auto">🤖 Auto</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
 
-                {/* Priority */}
-                <FormField
-                  control={form.control}
-                  name="priority"
-                  render={({ field }) => (
-                    <FormItem>
-                      <FormLabel>Priority</FormLabel>
-                      <Select 
-                        onValueChange={field.onChange} 
-                        defaultValue={field.value}
-                        disabled={uploadMutation.isPending}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder="Select priority" />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent>
-                          <SelectItem value="0">Normal</SelectItem>
-                          <SelectItem value="1">High</SelectItem>
-                          <SelectItem value="2">Urgent</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <FormMessage />
-                    </FormItem>
-                  )}
-                />
+                  {/* Enhanced Priority Select */}
+                  <FormField
+                    control={form.control}
+                    name="priority"
+                    render={({ field }) => (
+                      <FormItem className="space-y-3">
+                        <FormLabel className="text-sm font-semibold text-foreground">Priority</FormLabel>
+                        <Select 
+                          onValueChange={field.onChange} 
+                          defaultValue={field.value}
+                          disabled={uploadMutation.isPending}
+                        >
+                          <FormControl>
+                            <SelectTrigger className="input-enhanced h-12 focus-enhanced">
+                              <SelectValue placeholder="Select priority" />
+                            </SelectTrigger>
+                          </FormControl>
+                          <SelectContent>
+                            <SelectItem value="0">📝 Normal</SelectItem>
+                            <SelectItem value="1">⭐ High</SelectItem>
+                            <SelectItem value="2">🚨 Urgent</SelectItem>
+                          </SelectContent>
+                        </Select>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
               </div>
 
-              {/* Submit Button */}
-              <div className="flex flex-col gap-4">
+              {/* Enhanced Submit Section */}
+              <div className="space-y-6 pt-4">
                 <Button 
                   type="submit" 
-                  className="w-full" 
-                  size="lg"
+                  className="w-full h-14 text-lg btn-enhanced bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 shadow-colored-primary hover:shadow-xl transition-all duration-300" 
                   disabled={uploadMutation.isPending}
                 >
                   {uploadMutation.isPending ? (
                     <>
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      <Loader2 className="h-5 w-5 mr-3 animate-spin" />
                       Processing Transcription...
                     </>
                   ) : (
                     <>
-                      <Upload className="h-4 w-4 mr-2" />
+                      <Upload className="h-5 w-5 mr-3" />
                       Upload and Transcribe
                     </>
                   )}
                 </Button>
 
-                {/* Processing Status */}
+                {/* Enhanced Processing Status */}
                 {uploadMutation.isPending && (
-                  <Card>
-                    <CardContent className="pt-6">
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between text-sm">
-                          <span>Processing your audio file...</span>
-                          <Loader2 className="h-4 w-4 animate-spin" />
+                  <Card className="card-enhanced border-blue-200/50 bg-blue-50/30 animate-fade-in">
+                    <CardContent className="p-6">
+                      <div className="space-y-4">
+                        <div className="flex items-center justify-between">
+                          <span className="font-medium text-blue-800">Processing your audio file...</span>
+                          <div className="flex items-center gap-2">
+                            <div className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                            <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+                          </div>
                         </div>
-                        <div className="text-xs text-muted-foreground">
+                        <div className="w-full bg-blue-100 rounded-full h-2">
+                          <div className="bg-gradient-to-r from-blue-400 to-blue-500 h-2 rounded-full loading-shimmer" />
+                        </div>
+                        <div className="text-sm text-blue-700/80">
                           This may take several minutes depending on the file size and backend processing speed.
                         </div>
                       </div>
@@ -312,29 +362,39 @@ export function UploadFormReactQuery() {
                   </Card>
                 )}
 
-                {/* Success State */}
+                {/* Enhanced Success State */}
                 {uploadMutation.isSuccess && (
-                  <Card className="border-green-200 bg-green-50">
-                    <CardContent className="pt-6">
-                      <div className="flex items-center gap-2 text-green-700">
-                        <CheckCircle className="h-4 w-4" />
-                        <span>Transcription completed successfully!</span>
+                  <Card className="card-enhanced border-green-200/50 bg-green-50/30 animate-scale-in">
+                    <CardContent className="p-6">
+                      <div className="flex items-center gap-3 text-green-700">
+                        <div className="p-2 rounded-lg bg-green-100 text-green-600">
+                          <CheckCircle className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <div className="font-medium">Transcription completed successfully!</div>
+                          <div className="text-sm text-green-600">Redirecting to results...</div>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
                 )}
 
-                {/* Error State */}
+                {/* Enhanced Error State */}
                 {uploadMutation.isError && (
-                  <Card className="border-red-200 bg-red-50">
-                    <CardContent className="pt-6">
-                      <div className="flex items-center gap-2 text-red-700">
-                        <AlertTriangle className="h-4 w-4" />
-                        <span>
-                          {uploadMutation.error instanceof Error 
-                            ? uploadMutation.error.message 
-                            : "An error occurred during processing"}
-                        </span>
+                  <Card className="card-enhanced border-red-200/50 bg-red-50/30 animate-scale-in">
+                    <CardContent className="p-6">
+                      <div className="flex items-center gap-3 text-red-700">
+                        <div className="p-2 rounded-lg bg-red-100 text-red-600">
+                          <AlertTriangle className="h-5 w-5" />
+                        </div>
+                        <div>
+                          <div className="font-medium">Processing failed</div>
+                          <div className="text-sm text-red-600">
+                            {uploadMutation.error instanceof Error 
+                              ? uploadMutation.error.message 
+                              : "An error occurred during processing"}
+                          </div>
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
@@ -345,17 +405,34 @@ export function UploadFormReactQuery() {
         </CardContent>
       </Card>
 
-      {/* Information Card */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">How it works</CardTitle>
+      {/* Enhanced Information Card */}
+      <Card className="card-enhanced bg-gradient-to-br from-slate-50/50 to-gray-50/50">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-lg flex items-center gap-2">
+            <div className="p-2 rounded-lg bg-indigo-100 text-indigo-600">
+              <FileAudio className="h-5 w-5" />
+            </div>
+            How it works
+          </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-2 text-sm text-muted-foreground">
-          <p>• Your audio file will be processed synchronously</p>
-          <p>• Processing typically takes 1-5 minutes depending on file length</p>
-          <p>• Results will be saved automatically once processing completes</p>
-          <p>• You'll be redirected to view the transcription results</p>
-          <p>• No manual synchronization required</p>
+        <CardContent className="space-y-3">
+          <div className="grid gap-3">
+            <div className="flex items-start gap-3">
+              <div className="w-6 h-6 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-xs font-semibold mt-0.5">1</div>
+              <p className="text-sm text-muted-foreground">Your audio file will be processed synchronously with real-time updates</p>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="w-6 h-6 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-xs font-semibold mt-0.5">2</div>
+              <p className="text-sm text-muted-foreground">Processing typically takes 1-5 minutes depending on file length and backend</p>
+            </div>
+            <div className="flex items-start gap-3">
+              <div className="w-6 h-6 rounded-full bg-purple-100 text-purple-600 flex items-center justify-center text-xs font-semibold mt-0.5">3</div>
+              <p className="text-sm text-muted-foreground">Results are automatically saved and you'll be redirected to view them</p>
+            </div>
+          </div>
+          <div className="mt-4 p-3 bg-blue-50/50 rounded-lg border border-blue-200/30">
+            <p className="text-xs text-blue-700 font-medium">💡 Tip: Use GPU backend for faster processing of longer audio files</p>
+          </div>
         </CardContent>
       </Card>
     </div>

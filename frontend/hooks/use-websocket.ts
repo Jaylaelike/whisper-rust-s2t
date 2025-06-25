@@ -15,7 +15,7 @@ interface WebSocketMessage {
   [key: string]: any
 }
 
-export function useWebSocket(url: string = '/ws') {
+export function useWebSocket(url: string = process.env.NEXT_PUBLIC_WS_URL || '/ws') {
   const [isConnected, setIsConnected] = useState(false)
   const [lastMessage, setLastMessage] = useState<WebSocketMessage | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
@@ -26,10 +26,22 @@ export function useWebSocket(url: string = '/ws') {
 
   const connect = useCallback(() => {
     try {
-      // Create WebSocket URL (handle both relative and absolute URLs)
-      const wsUrl = url.startsWith('/') 
-        ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//localhost:8000${url}`
-        : url
+      // Create WebSocket URL
+      let wsUrl: string;
+      
+      if (url.startsWith('ws://') || url.startsWith('wss://')) {
+        // Full WebSocket URL provided
+        wsUrl = url;
+      } else if (url.startsWith('/')) {
+        // Relative URL - construct full URL
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = process.env.NEXT_PUBLIC_API_SERVER_URL?.replace(/^https?:\/\//, '') || 'localhost:8000';
+        wsUrl = `${protocol}//${host}${url}`;
+      } else {
+        // Assume it's a host:port format
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsUrl = `${protocol}//${url}`;
+      }
 
       console.log('🔌 Connecting to WebSocket:', wsUrl)
       
