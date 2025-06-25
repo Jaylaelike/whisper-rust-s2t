@@ -51,6 +51,11 @@ type FormData = z.infer<typeof formSchema>
 export function UploadFormReactQuery() {
   const router = useRouter()
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
+  const [audioMetadata, setAudioMetadata] = useState<{
+    duration: number | null
+    sampleRate: number | null
+    channels: number | null
+  } | null>(null)
   
   const uploadMutation = useUploadTranscription()
 
@@ -76,6 +81,16 @@ export function UploadFormReactQuery() {
       formData.append("backend", values.backend)
       formData.append("priority", values.priority)
       formData.append("audioFile", values.audioFile[0])
+      
+      // Add metadata for timeout calculation
+      if (audioMetadata) {
+        if (audioMetadata.duration) {
+          formData.append("durationSeconds", audioMetadata.duration.toString())
+        }
+      }
+      
+      // Add file size for timeout calculation
+      formData.append("fileSizeBytes", values.audioFile[0].size.toString())
 
       const result = await uploadMutation.mutateAsync(formData)
       
@@ -89,17 +104,112 @@ export function UploadFormReactQuery() {
     }
   }
 
-  const handleFileChange = (files: FileList | null) => {
+  const handleFileChange = async (files: FileList | null) => {
     if (files && files.length > 0) {
-      setSelectedFile(files[0])
+      const file = files[0]
+      setSelectedFile(file)
+      
+      // Extract audio metadata for processing time estimation
+      try {
+        const metadata = await extractAudioMetadata(file)
+        setAudioMetadata(metadata)
+        
+        if (metadata.duration) {
+          const durationMinutes = Math.round(metadata.duration / 60)
+          console.log(`Audio file: ${file.name}, Size: ${(file.size / 1024 / 1024).toFixed(1)}MB, Duration: ${durationMinutes}min`)
+        }
+      } catch (error) {
+        console.warn('Failed to extract audio metadata:', error)
+        setAudioMetadata(null)
+      }
     } else {
       setSelectedFile(null)
+      setAudioMetadata(null)
     }
   }
 
   const formatFileSize = (bytes: number) => {
-    const mb = bytes / (1024 * 1024)
-    return `${mb.toFixed(1)} MB`
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  }
+
+  const getEstimatedProcessingTime = (file: File) => {
+    const sizeMB = file.size / (1024 * 1024)
+    
+    // Estimate processing time based on file size
+    // Rough estimate: 1MB = 30-60 seconds of processing
+    let estimatedMinutes = Math.ceil(sizeMB * 0.5) // Conservative estimate
+    
+    if (sizeMB > 100) {
+      estimatedMinutes = Math.ceil(sizeMB * 1.2) // Larger files take longer per MB
+    }
+    
+    return estimatedMinutes
+  }
+
+  const getFileSizeWarning = (file: File) => {
+    const sizeMB = file.size / (1024 * 1024)
+    const durationMinutes = audioMetadata?.duration ? audioMetadata.duration / 60 : null
+    
+    // Enhanced processing time estimation with duration
+    let estimatedMinutes = Math.ceil(sizeMB * 0.5) // Base estimate
+    if (durationMinutes) {
+      // More accurate estimate: roughly 2-3x real-time for transcription
+      estimatedMinutes = Math.max(estimatedMinutes, Math.ceil(durationMinutes * 2.5))
+    }
+    
+    const durationInfo = durationMinutes ? `, ${Math.round(durationMinutes)} minutes long` : ''
+    
+    if (sizeMB > 200 || (durationMinutes && durationMinutes > 60)) {
+      return {
+        level: 'error',
+        message: `Very large file (${formatFileSize(file.size)}${durationInfo}). Processing may take over ${estimatedMinutes} minutes and could timeout. Consider splitting into smaller segments.`
+      }
+    } else if (sizeMB > 100 || (durationMinutes && durationMinutes > 30)) {
+      return {
+        level: 'warning',
+        message: `Large file (${formatFileSize(file.size)}${durationInfo}). Estimated processing time: ${estimatedMinutes} minutes. System will use extended timeout.`
+      }
+    } else if (sizeMB > 50 || (durationMinutes && durationMinutes > 15)) {
+      return {
+        level: 'info',
+        message: `Medium file (${formatFileSize(file.size)}${durationInfo}). Estimated processing time: ${estimatedMinutes} minutes.`
+      }
+    }
+    
+    return null
+  }
+
+  // Extract audio metadata for timeout calculation
+  const extractAudioMetadata = async (file: File): Promise<{
+    duration: number | null
+    sampleRate: number | null
+    channels: number | null
+  }> => {
+    return new Promise((resolve) => {
+      const audio = new Audio()
+      const url = URL.createObjectURL(file)
+      
+      audio.onloadedmetadata = () => {
+        const metadata = {
+          duration: audio.duration || null,
+          sampleRate: null, // Browser doesn't expose this easily
+          channels: null    // Browser doesn't expose this easily
+        }
+        URL.revokeObjectURL(url)
+        resolve(metadata)
+      }
+      
+      audio.onerror = () => {
+        URL.revokeObjectURL(url)
+        resolve({ duration: null, sampleRate: null, channels: null })
+      }
+      
+      audio.src = url
+    })
   }
 
   return (
@@ -205,16 +315,52 @@ export function UploadFormReactQuery() {
                         
                         {/* Selected File Display */}
                         {selectedFile && (
-                          <div className="flex items-center gap-4 p-4 bg-green-50/50 border border-green-200/50 rounded-xl animate-fade-in">
-                            <div className="p-2 rounded-lg bg-green-100 text-green-600">
-                              <CheckCircle className="h-5 w-5" />
-                            </div>
-                            <div className="flex-1">
-                              <div className="font-medium text-green-800">{selectedFile.name}</div>
-                              <div className="text-sm text-green-600">
-                                Size: {formatFileSize(selectedFile.size)} • Type: {selectedFile.type || 'audio/*'}
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-4 p-4 bg-green-50/50 border border-green-200/50 rounded-xl animate-fade-in">
+                              <div className="p-2 rounded-lg bg-green-100 text-green-600">
+                                <CheckCircle className="h-5 w-5" />
+                              </div>
+                              <div className="flex-1">
+                                <div className="font-medium text-green-800">{selectedFile.name}</div>
+                                <div className="text-sm text-green-600">
+                                  Size: {formatFileSize(selectedFile.size)} • Type: {selectedFile.type || 'audio/*'}
+                                </div>
                               </div>
                             </div>
+                            
+                            {/* File Size Warning */}
+                            {(() => {
+                              const warning = getFileSizeWarning(selectedFile)
+                              if (!warning) return null
+                              
+                              const bgColor = warning.level === 'error' ? 'bg-red-50/50 border-red-200/50' :
+                                             warning.level === 'warning' ? 'bg-yellow-50/50 border-yellow-200/50' :
+                                             'bg-blue-50/50 border-blue-200/50'
+                              const iconColor = warning.level === 'error' ? 'text-red-600' :
+                                               warning.level === 'warning' ? 'text-yellow-600' :
+                                               'text-blue-600'
+                              const textColor = warning.level === 'error' ? 'text-red-800' :
+                                               warning.level === 'warning' ? 'text-yellow-800' :
+                                               'text-blue-800'
+                              
+                              return (
+                                <div className={`flex items-start gap-3 p-4 border rounded-xl animate-fade-in ${bgColor}`}>
+                                  <div className={`p-1 rounded ${iconColor}`}>
+                                    <AlertTriangle className="h-5 w-5" />
+                                  </div>
+                                  <div className="flex-1">
+                                    <div className={`text-sm font-medium ${textColor}`}>
+                                      {warning.level === 'error' ? 'Large File Warning' :
+                                       warning.level === 'warning' ? 'Processing Time Notice' :
+                                       'File Information'}
+                                    </div>
+                                    <div className={`text-sm mt-1 ${textColor.replace('800', '700')}`}>
+                                      {warning.message}
+                                    </div>
+                                  </div>
+                                </div>
+                              )
+                            })()}
                           </div>
                         )}
                       </div>

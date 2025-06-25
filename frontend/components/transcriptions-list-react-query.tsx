@@ -83,6 +83,42 @@ export function TranscriptionsListNew() {
     }
   }
 
+  const handleRetryTranscription = async (transcription: Transcription) => {
+    if (!confirm(`Retry transcription for "${transcription.title}"? This will create a new transcription task.`)) {
+      return
+    }
+
+    try {
+      // Create a new transcription task with the same settings
+      const response = await fetch('/api/transcriptions/retry', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          originalTranscriptionId: transcription.id,
+          title: `${transcription.title} (Retry)`,
+          description: transcription.description,
+          language: transcription.language,
+          backend: transcription.backend,
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to retry transcription')
+      }
+
+      const result = await response.json()
+      toast.success(`Retry task queued for "${transcription.title}"`)
+      toast.info(`New task ID: ${result.task_id.slice(-8)}`)
+      
+      // Refresh the list
+      refetch()
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to retry transcription")
+    }
+  }
+
   const getRiskBadgeVariant = (result?: string) => {
     switch (result) {
       case "risky": return "destructive"
@@ -209,18 +245,19 @@ export function TranscriptionsListNew() {
       {data && (
         <Card className="card-enhanced animate-slide-up shadow-xl border-0">
           <CardContent className="p-0">
-            <div className="overflow-hidden rounded-xl">
-              <Table className="table-enhanced">
-                <TableHeader>
-                  <TableRow className="border-none bg-gradient-to-r from-muted/40 to-muted/20">
-                    <TableHead className="font-semibold text-foreground">Title & Details</TableHead>
-                    <TableHead className="font-semibold text-foreground">Configuration</TableHead>
-                    <TableHead className="font-semibold text-foreground">File Info</TableHead>
-                    <TableHead className="font-semibold text-foreground">Risk Status</TableHead>
-                    <TableHead className="font-semibold text-foreground">Completed</TableHead>
-                    <TableHead className="font-semibold text-foreground">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
+            <div className="overflow-x-auto">
+              <div className="min-w-[800px]"> {/* Ensure minimum width for desktop layout */}
+                <Table className="table-enhanced w-full">
+                  <TableHeader>
+                    <TableRow className="border-none bg-gradient-to-r from-muted/40 to-muted/20">
+                      <TableHead className="font-semibold text-foreground min-w-[200px]">Title & Details</TableHead>
+                      <TableHead className="font-semibold text-foreground min-w-[120px] hidden sm:table-cell">Configuration</TableHead>
+                      <TableHead className="font-semibold text-foreground min-w-[120px] hidden md:table-cell">File Info</TableHead>
+                      <TableHead className="font-semibold text-foreground min-w-[100px]">Risk Status</TableHead>
+                      <TableHead className="font-semibold text-foreground min-w-[120px] hidden sm:table-cell">Completed</TableHead>
+                      <TableHead className="font-semibold text-foreground min-w-[120px]">Actions</TableHead>
+                    </TableRow>
+                  </TableHeader>
                 <TableBody>
                   {data.transcriptions.length === 0 ? (
                     <TableRow>
@@ -277,10 +314,48 @@ export function TranscriptionsListNew() {
                             <div className="text-xs text-muted-foreground font-mono bg-muted/30 px-2 py-1 rounded w-fit">
                               ID: {transcription.id.slice(-8)}
                             </div>
+                            {/* Mobile-only information */}
+                            <div className="block sm:hidden space-y-1">
+                              <div className="flex items-center gap-2 text-xs">
+                                <Badge variant="outline" className="text-xs">
+                                  🌐 {transcription.language.toUpperCase()}
+                                </Badge>
+                                <Cpu className="h-3 w-3 text-muted-foreground" />
+                                <span className="text-muted-foreground">
+                                  {transcription.backend.toUpperCase()}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-4 text-xs text-muted-foreground">
+                                <div className="flex items-center gap-1">
+                                  <Clock className="h-3 w-3" />
+                                  <span>{formatDuration(transcription.durationSeconds)}</span>
+                                </div>
+                                <div className="flex items-center gap-1">
+                                  <FileAudio className="h-3 w-3" />
+                                  <span>{formatFileSize(transcription.fileSizeBytes)}</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <Badge 
+                                  className={`status-indicator text-xs ${
+                                    transcription.riskDetectionResult === 'risky' ? 'status-failed' :
+                                    transcription.riskDetectionResult === 'safe' ? 'status-completed' : 'status-pending'
+                                  }`}
+                                >
+                                  {getRiskIcon(transcription.riskDetectionResult)}
+                                  <span className="capitalize">
+                                    {transcription.riskDetectionResult || "Unknown"}
+                                  </span>
+                                </Badge>
+                                <div className="text-xs text-muted-foreground">
+                                  {formatDistanceToNow(new Date(transcription.completedAt), { addSuffix: true })}
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </TableCell>
                         
-                        <TableCell className="py-4">
+                        <TableCell className="py-4 hidden sm:table-cell">
                           <div className="space-y-2">
                             <div className="flex items-center gap-2">
                               <Badge variant="outline" className="text-xs">
@@ -296,7 +371,7 @@ export function TranscriptionsListNew() {
                           </div>
                         </TableCell>
                         
-                        <TableCell className="py-4">
+                        <TableCell className="py-4 hidden md:table-cell">
                           <div className="space-y-2 text-sm">
                             <div className="flex items-center gap-2">
                               <Clock className="h-3 w-3 text-muted-foreground" />
@@ -328,7 +403,7 @@ export function TranscriptionsListNew() {
                           </Badge>
                         </TableCell>
                         
-                        <TableCell className="py-4">
+                        <TableCell className="py-4 hidden sm:table-cell">
                           <div className="space-y-1">
                             <div className="text-sm text-muted-foreground">
                               {formatDistanceToNow(new Date(transcription.completedAt), { addSuffix: true })}
@@ -376,6 +451,18 @@ export function TranscriptionsListNew() {
                                 <Trash2 className="h-3 w-3" />
                               )}
                             </Button>
+                            {/* Show retry button for potentially failed transcriptions */}
+                            {transcription.transcriptionText && transcription.transcriptionText.toLowerCase().includes('timed out') && (
+                              <Button 
+                                size="sm" 
+                                variant="outline"
+                                onClick={() => handleRetryTranscription(transcription)}
+                                title="Retry transcription"
+                                className="btn-enhanced hover:shadow-md text-yellow-600 hover:text-yellow-700 hover:border-yellow-300 hover:bg-yellow-50 transition-all duration-200"
+                              >
+                                <RefreshCw className="h-3 w-3" />
+                              </Button>
+                            )}
                           </div>
                         </TableCell>
                       </TableRow>
@@ -383,6 +470,7 @@ export function TranscriptionsListNew() {
                   )}
                 </TableBody>
               </Table>
+              </div>
             </div>
           </CardContent>
         </Card>

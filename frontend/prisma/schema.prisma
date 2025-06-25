@@ -30,6 +30,7 @@ model QueueTask {
   
   // Metadata
   fileSizeBytes         Int?      // Original file size
+  durationSeconds       Float?    // Audio duration for timeout calculation
   
   // Timestamps
   startedAt             DateTime? // When processing started

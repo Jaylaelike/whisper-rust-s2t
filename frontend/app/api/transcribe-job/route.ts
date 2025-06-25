@@ -26,8 +26,13 @@ export async function POST(request: NextRequest) {
     const backend = formData.get("backend") as string || "cpu"
     const priority = parseInt(formData.get("priority") as string || "0")
     const audioFile = formData.get("audioFile") as File
+    
+    // Extract metadata for timeout calculation
+    const fileSizeBytes = parseInt(formData.get("fileSizeBytes") as string || audioFile.size.toString())
+    const durationSeconds = parseFloat(formData.get("durationSeconds") as string || "0")
 
     console.log(`Processing upload: ${title}, backend: ${backend}, language: ${language}`)
+    console.log(`File metadata: size=${(fileSizeBytes / 1024 / 1024).toFixed(1)}MB, duration=${Math.round(durationSeconds / 60)}min`)
 
     if (!title || !audioFile) {
       return NextResponse.json({ error: "Title and audio file are required" }, { status: 400 })
@@ -58,7 +63,9 @@ export async function POST(request: NextRequest) {
         priority,
         audioBuffer,
         audioFile.name,
-        audioFile.type
+        audioFile.type,
+        fileSizeBytes,
+        durationSeconds
       ),
       new Promise((_, reject) => 
         setTimeout(() => reject(new Error('Transcription timeout after 10 minutes')), 600000)
@@ -95,7 +102,9 @@ async function processTranscriptionSync(
   priority: number,
   audioBuffer: Buffer,
   originalFileName: string,
-  mimeType: string
+  mimeType: string,
+  fileSizeBytes: number,
+  durationSeconds: number
 ): Promise<any> {
   let queueTask: any = null
   
@@ -112,7 +121,8 @@ async function processTranscriptionSync(
         language,
         priority,
         status: "pending",
-        fileSizeBytes: audioBuffer.length,
+        fileSizeBytes: fileSizeBytes,
+        durationSeconds: durationSeconds > 0 ? durationSeconds : null,
       }
     })
 
@@ -126,8 +136,14 @@ async function processTranscriptionSync(
     transcriptionFormData.append("language", language)
     transcriptionFormData.append("backend", backend)
     transcriptionFormData.append("priority", priority.toString())
+    
+    // Include metadata for timeout calculation
+    transcriptionFormData.append("file_size_bytes", fileSizeBytes.toString())
+    if (durationSeconds > 0) {
+      transcriptionFormData.append("duration_seconds", durationSeconds.toString())
+    }
 
-    console.log(`✓ Form data prepared for ${originalFileName}`)
+    console.log(`✓ Form data prepared for ${originalFileName} (${(fileSizeBytes / 1024 / 1024).toFixed(1)}MB, ${Math.round(durationSeconds / 60)}min)`)
 
     // Step 3: Submit to backend and wait for completion
     console.log(`Step 3: Submitting to backend: ${TRANSCRIPTION_SERVICE_URL}/api/transcribe`)
@@ -171,7 +187,7 @@ async function processTranscriptionSync(
     })
 
     // Step 4: Poll backend until completion
-    const transcriptionResult = await pollForCompletion(taskId, queueTask.id)
+    const transcriptionResult = await pollForCompletion(taskId, queueTask.id, fileSizeBytes, durationSeconds)
 
     // Step 5: Create permanent transcription record
     const transcription = await (prisma as any).transcription.create({
@@ -223,9 +239,30 @@ async function processTranscriptionSync(
   }
 }
 
-async function pollForCompletion(taskId: string, queueTaskId: string): Promise<any> {
-  const maxAttempts = 240 // 20 minutes with 5-second intervals
+async function pollForCompletion(taskId: string, queueTaskId: string, fileSizeBytes: number = 0, durationSeconds: number = 0): Promise<any> {
+  // Calculate dynamic timeout based on file size and duration
+  let maxTimeoutMinutes = 20 // Base 20 minutes
+  
+  const sizeMB = fileSizeBytes / (1024 * 1024)
+  const durationMinutes = durationSeconds / 60
+  
+  // Add extra time for large files (1 minute per 50MB)
+  if (sizeMB > 50) {
+    maxTimeoutMinutes += Math.ceil((sizeMB / 50) * 1)
+  }
+  
+  // Add extra time for long audio (2 minutes per 30 minutes of audio)
+  if (durationMinutes > 30) {
+    maxTimeoutMinutes += Math.ceil((durationMinutes / 30) * 2)
+  }
+  
+  // Cap at 60 minutes maximum
+  maxTimeoutMinutes = Math.min(maxTimeoutMinutes, 60)
+  
+  const maxAttempts = Math.ceil((maxTimeoutMinutes * 60) / 5) // 5-second intervals
   let attempts = 0
+
+  console.log(`Polling task ${taskId} with dynamic timeout: ${maxTimeoutMinutes} minutes (file: ${sizeMB.toFixed(1)}MB, ${durationMinutes.toFixed(1)}min)`)
 
   while (attempts < maxAttempts) {
     try {
@@ -274,7 +311,11 @@ async function pollForCompletion(taskId: string, queueTaskId: string): Promise<a
     }
   }
 
-  throw new Error(`Task ${taskId} did not complete within the maximum time limit`)
+  const timeoutMessage = sizeMB > 100 || durationMinutes > 60 
+    ? `Large file processing (${sizeMB.toFixed(1)}MB, ${durationMinutes.toFixed(1)}min) did not complete within ${maxTimeoutMinutes} minutes. Consider splitting the file into smaller segments.`
+    : `Task ${taskId} did not complete within ${maxTimeoutMinutes} minutes`
+    
+  throw new Error(timeoutMessage)
 }
 
 function extractTextFromResult(result: any): string {

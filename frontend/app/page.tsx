@@ -1,6 +1,6 @@
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { QueueOverview } from "@/components/queue-overview"
+import { QueueOverviewNew } from "@/components/queue-overview-new"
 import Link from "next/link"
 import { ArrowRight, FileAudio, ListMusic, Activity, TrendingUp, Sparkles } from "lucide-react"
 
@@ -109,7 +109,7 @@ export default function Home() {
               </Button>
             </Link>
           </div>
-          <QueueOverview />
+          <QueueOverviewNew />
         </div>
       </div>
     </div>

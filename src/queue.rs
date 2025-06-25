@@ -555,7 +555,37 @@ impl TaskQueue {
 
         // Wait for result while periodically updating progress and allowing other tasks to run
         let mut progress = 35.0f64;
-        let max_wait_time = 300; // 5 minutes max
+        
+        // Dynamic timeout based on file size and estimated duration
+        let file_size = payload.get("file_size_bytes")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let duration_seconds = payload.get("duration_seconds")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+            
+        let file_size_mb = file_size as f64 / (1024.0 * 1024.0);
+        let estimated_duration_minutes = duration_seconds / 60.0;
+        
+        // Calculate timeout: Base 5 minutes + extra time for large files
+        let mut max_wait_time = 300; // Base 5 minutes
+        
+        // Add extra time for large files (1 minute per 50MB)
+        if file_size_mb > 50.0 {
+            max_wait_time += ((file_size_mb / 50.0) * 60.0) as u64;
+        }
+        
+        // Add extra time for long audio (2 minutes per hour of audio)
+        if estimated_duration_minutes > 30.0 {
+            max_wait_time += ((estimated_duration_minutes / 30.0) * 120.0) as u64;
+        }
+        
+        // Cap maximum timeout at 30 minutes for safety
+        max_wait_time = max_wait_time.min(1800);
+        
+        println!("Processing file: {:.1}MB, {:.1}min duration, timeout: {}s", 
+                file_size_mb, estimated_duration_minutes, max_wait_time);
+        
         let mut elapsed_seconds = 0;
         
         loop {
@@ -594,7 +624,13 @@ impl TaskQueue {
                     
                     // Check if we've exceeded max wait time
                     if elapsed_seconds > max_wait_time {
-                        return Err("Transcription timed out after 5 minutes".to_string());
+                        let timeout_msg = if file_size_mb > 100.0 || estimated_duration_minutes > 60.0 {
+                            format!("Large file processing timed out after {} minutes. File: {:.1}MB, {:.1}min duration. Consider splitting the file into smaller segments.", 
+                                    max_wait_time / 60, file_size_mb, estimated_duration_minutes)
+                        } else {
+                            format!("Transcription timed out after {} minutes", max_wait_time / 60)
+                        };
+                        return Err(timeout_msg);
                     }
                     
                     // Calculate progress based on time elapsed (smoother progression)

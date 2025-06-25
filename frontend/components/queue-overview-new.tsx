@@ -12,8 +12,11 @@ import { formatDistanceToNow } from "date-fns"
 import { toast } from "sonner"
 import { useEffect, useState, useCallback } from "react"
 import { isUsingRedisApi } from "@/lib/api-config"
+import { useQueryClient } from "@tanstack/react-query"
 
 export function QueueOverviewNew() {
+  const queryClient = useQueryClient()
+  
   const { 
     data: queueStatus, 
     isLoading: isLoadingStatus, 
@@ -31,23 +34,21 @@ export function QueueOverviewNew() {
   const deleteQueueTask = useDeleteQueueTask()
   const { isConnected: isWebSocketConnected, lastMessage } = useWebSocketContext()
 
-  // Local state for real-time updates with proper typing
-  const [realtimeQueueStatus, setRealtimeQueueStatus] = useState<any>(null)
-  const [realtimeQueueTasks, setRealtimeQueueTasks] = useState<any>(null)
+  // Remove local state and use TanStack Query cache directly
   const [lastUpdated, setLastUpdated] = useState(new Date())
   const [updateCount, setUpdateCount] = useState(0)
 
-  // Debounced update function to prevent too frequent re-renders
-  const debouncedSetLastUpdated = useCallback(() => {
+  // Enhanced debounced update function
+  const debouncedUpdateMetrics = useCallback(() => {
     const timer = setTimeout(() => {
       setLastUpdated(new Date())
       setUpdateCount(prev => prev + 1)
-    }, 500)
+    }, 300) // Reduced delay for more responsive updates
     
     return () => clearTimeout(timer)
   }, [])
 
-  // Handle WebSocket messages for real-time updates
+  // Enhanced WebSocket message handling with direct cache updates
   useEffect(() => {
     if (!lastMessage || !isWebSocketConnected) return
 
@@ -55,74 +56,83 @@ export function QueueOverviewNew() {
 
     switch (type) {
       case 'queue_stats_update':
-        // Update queue status counts in real-time
+        // Update queue status cache directly
         if (lastMessage.stats) {
-          setRealtimeQueueStatus((prev: any) => ({
-            ...prev,
-            queue: {
-              ...prev?.queue,
-              pending: lastMessage.stats.pending_count || 0,
-              processing: lastMessage.stats.processing_count || 0,
+          queryClient.setQueryData(['queue-status'], (oldData: any) => {
+            if (!oldData) return oldData
+            return {
+              ...oldData,
+              queue: {
+                ...oldData.queue,
+                pending: lastMessage.stats.pending_count || 0,
+                processing: lastMessage.stats.processing_count || 0,
+              }
             }
-          }))
-          debouncedSetLastUpdated()
+          })
+          debouncedUpdateMetrics()
         }
         break
 
       case 'new_task':
-        // A new task was added to the queue
+        // Update pending count and invalidate tasks
         if (task_id) {
-          // Increment pending count
-          setRealtimeQueueStatus((prev: any) => ({
-            ...prev,
-            queue: {
-              ...prev?.queue,
-              pending: (prev?.queue?.pending || 0) + 1
+          queryClient.setQueryData(['queue-status'], (oldData: any) => {
+            if (!oldData) return oldData
+            return {
+              ...oldData,
+              queue: {
+                ...oldData.queue,
+                pending: (oldData.queue?.pending || 0) + 1
+              }
             }
-          }))
-          debouncedSetLastUpdated()
+          })
+          
+          // Invalidate queue tasks to refetch with new task
+          queryClient.invalidateQueries({ queryKey: ['queue-tasks'] })
+          debouncedUpdateMetrics()
           toast.info(`📋 New task queued: ${task_id.slice(-8)}`)
         }
         break
 
       case 'task_status_update':
         if (task_id && status === 'processing') {
-          // Task moved from pending to processing
-          setRealtimeQueueStatus((prev: any) => ({
-            ...prev,
-            queue: {
-              ...prev?.queue,
-              pending: Math.max((prev?.queue?.pending || 0) - 1, 0),
-              processing: (prev?.queue?.processing || 0) + 1
-            }
-          }))
-          
-          // Update processing tasks list
-          setRealtimeQueueTasks((prev: any) => {
-            if (!prev?.tasks) return prev
-            
+          // Update queue status counts
+          queryClient.setQueryData(['queue-status'], (oldData: any) => {
+            if (!oldData) return oldData
             return {
-              ...prev,
-              tasks: prev.tasks.map((task: any) => 
+              ...oldData,
+              queue: {
+                ...oldData.queue,
+                pending: Math.max((oldData.queue?.pending || 0) - 1, 0),
+                processing: (oldData.queue?.processing || 0) + 1
+              }
+            }
+          })
+          
+          // Update specific task in tasks cache
+          queryClient.setQueryData(['queue-tasks'], (oldData: any) => {
+            if (!oldData?.tasks) return oldData
+            return {
+              ...oldData,
+              tasks: oldData.tasks.map((task: any) => 
                 task.taskId === task_id 
                   ? { ...task, status: 'processing', startedAt: new Date().toISOString() }
                   : task
               )
             }
           })
-          debouncedSetLastUpdated()
+          debouncedUpdateMetrics()
         }
         break
 
       case 'task_progress':
         if (task_id && progress !== undefined) {
-          // Update task progress in real-time
-          setRealtimeQueueTasks((prev: any) => {
-            if (!prev?.tasks) return prev
-            
+          // Update task progress in both caches
+          queryClient.setQueryData(['queue-tasks'], (oldData: any) => {
+            if (!oldData?.tasks) return oldData
             return {
-              ...prev,
-              tasks: prev.tasks.map((task: any) =>
+              ...oldData,
+              tasks: oldData.tasks.map((task: any) =>
                 task.taskId === task_id
                   ? { ...task, progress: progress }
                   : task
@@ -130,15 +140,13 @@ export function QueueOverviewNew() {
             }
           })
           
-          // Update processing tasks in status
-          setRealtimeQueueStatus((prev: any) => {
-            if (!prev?.queue?.processingTasks) return prev
-            
+          queryClient.setQueryData(['queue-status'], (oldData: any) => {
+            if (!oldData?.queue?.processingTasks) return oldData
             return {
-              ...prev,
+              ...oldData,
               queue: {
-                ...prev.queue,
-                processingTasks: prev.queue.processingTasks.map((task: any) =>
+                ...oldData.queue,
+                processingTasks: oldData.queue.processingTasks.map((task: any) =>
                   task.taskId === task_id
                     ? { ...task, progress: progress }
                     : task
@@ -146,80 +154,59 @@ export function QueueOverviewNew() {
               }
             }
           })
-          debouncedSetLastUpdated()
+          debouncedUpdateMetrics()
         }
         break
 
       case 'task_completed':
         if (task_id) {
-          // Task completed - update counts
-          setRealtimeQueueStatus((prev: any) => ({
-            ...prev,
-            queue: {
-              ...prev?.queue,
-              processing: Math.max((prev?.queue?.processing || 0) - 1, 0),
-              completed24h: (prev?.queue?.completed24h || 0) + 1
-            }
-          }))
-
-          // Update task status
-          setRealtimeQueueTasks((prev: any) => {
-            if (!prev?.tasks) return prev
-            
+          // Update queue status counts
+          queryClient.setQueryData(['queue-status'], (oldData: any) => {
+            if (!oldData) return oldData
             return {
-              ...prev,
-              tasks: prev.tasks.map((task: any) =>
+              ...oldData,
+              queue: {
+                ...oldData.queue,
+                processing: Math.max((oldData.queue?.processing || 0) - 1, 0),
+                completed24h: (oldData.queue?.completed24h || 0) + 1,
+                // Remove from processing tasks
+                processingTasks: oldData.queue?.processingTasks?.filter((task: any) => task.taskId !== task_id) || []
+              }
+            }
+          })
+
+          // Update task status in tasks cache
+          queryClient.setQueryData(['queue-tasks'], (oldData: any) => {
+            if (!oldData?.tasks) return oldData
+            return {
+              ...oldData,
+              tasks: oldData.tasks.map((task: any) =>
                 task.taskId === task_id
                   ? { 
                       ...task, 
                       status: status || 'completed',
-                      progress: 1.0
+                      progress: 1.0,
+                      completedAt: new Date().toISOString()
                     }
                   : task
               )
             }
           })
 
-          // Remove from processing tasks
-          setRealtimeQueueStatus((prev: any) => {
-            if (!prev?.queue?.processingTasks) return prev
-            
-            return {
-              ...prev,
-              queue: {
-                ...prev.queue,
-                processingTasks: prev.queue.processingTasks.filter((task: any) => task.taskId !== task_id)
-              }
-            }
-          })
-          debouncedSetLastUpdated()
+          debouncedUpdateMetrics()
           
           if (status === 'completed') {
             toast.success(`🎉 Task ${task_id.slice(-8)} completed successfully`)
           } else {
             toast.error(`❌ Task ${task_id.slice(-8)} failed`)
           }
+          
+          // Invalidate transcriptions to show new completed transcription
+          queryClient.invalidateQueries({ queryKey: ['transcriptions'] })
         }
         break
     }
-  }, [lastMessage, isWebSocketConnected])
-
-  // Sync real-time state with fetched data
-  useEffect(() => {
-    if (queueStatus && !realtimeQueueStatus) {
-      setRealtimeQueueStatus(queueStatus)
-    }
-  }, [queueStatus, realtimeQueueStatus])
-
-  useEffect(() => {
-    if (queueTasks && !realtimeQueueTasks) {
-      setRealtimeQueueTasks(queueTasks)
-    }
-  }, [queueTasks, realtimeQueueTasks])
-
-  // Use real-time data if available, fallback to fetched data
-  const currentQueueStatus = realtimeQueueStatus || queueStatus
-  const currentQueueTasks = realtimeQueueTasks || queueTasks
+  }, [lastMessage, isWebSocketConnected, queryClient, debouncedUpdateMetrics])
 
   const handleDeleteTask = async (taskId: string) => {
     try {
@@ -231,11 +218,9 @@ export function QueueOverviewNew() {
   }
 
   const handleRefresh = () => {
-    // Reset real-time state to force fresh fetch
-    setRealtimeQueueStatus(null)
-    setRealtimeQueueTasks(null)
-    refetchStatus()
-    refetchTasks()
+    // Invalidate and refetch all queue-related queries
+    queryClient.invalidateQueries({ queryKey: ['queue-status'] })
+    queryClient.invalidateQueries({ queryKey: ['queue-tasks'] })
     toast.success("Queue status refreshed")
   }
 
@@ -277,6 +262,37 @@ export function QueueOverviewNew() {
       case "failed": return "destructive"
       default: return "secondary"
     }
+  }
+
+  // Helper function to check if a task is taking too long
+  const getTaskTimeoutStatus = (task: any) => {
+    if (!task.startedAt) return null
+    
+    const now = new Date()
+    const startTime = new Date(task.startedAt)
+    const elapsedMinutes = (now.getTime() - startTime.getTime()) / (1000 * 60)
+    
+    // Estimate timeout based on task progress
+    let estimatedTimeout = 15 // Default 15 minutes
+    
+    if (task.progress && task.progress > 10) {
+      // If we have some progress, assume it's a larger file
+      estimatedTimeout = 30
+    }
+    
+    if (elapsedMinutes > estimatedTimeout) {
+      return {
+        level: 'error',
+        message: `Task may have timed out (running for ${Math.round(elapsedMinutes)} minutes)`
+      }
+    } else if (elapsedMinutes > estimatedTimeout * 0.7) {
+      return {
+        level: 'warning', 
+        message: `Long-running task (${Math.round(elapsedMinutes)} minutes elapsed)`
+      }
+    }
+    
+    return null
   }
 
   if (statusError || tasksError) {
@@ -394,7 +410,7 @@ export function QueueOverviewNew() {
       </div>
 
       {/* Enhanced Status Cards with Gradients and Animations */}
-      {currentQueueStatus && (
+      {queueStatus && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 animate-slide-up">
           <Card className="card-enhanced group hover:scale-105 transition-all duration-300">
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
@@ -405,14 +421,14 @@ export function QueueOverviewNew() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-yellow-600 mb-1 group-hover:scale-110 transition-transform duration-300">
-                {currentQueueStatus.queue.pending}
+                {queueStatus.queue.pending}
               </div>
               <p className="text-xs text-muted-foreground">
                 Tasks waiting to process
               </p>
               <div className="mt-2 h-1 bg-yellow-100 rounded-full overflow-hidden">
                 <div className="h-full bg-gradient-to-r from-yellow-400 to-yellow-500 rounded-full animate-pulse" 
-                     style={{ width: `${Math.min(currentQueueStatus.queue.pending * 10, 100)}%` }} />
+                     style={{ width: `${Math.min(queueStatus.queue.pending * 10, 100)}%` }} />
               </div>
             </CardContent>
           </Card>
@@ -426,14 +442,14 @@ export function QueueOverviewNew() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-blue-600 mb-1 group-hover:scale-110 transition-transform duration-300">
-                {currentQueueStatus.queue.processing}
+                {queueStatus.queue.processing}
               </div>
               <p className="text-xs text-muted-foreground">
                 Currently being processed
               </p>
               <div className="mt-2 h-1 bg-blue-100 rounded-full overflow-hidden">
                 <div className="h-full bg-gradient-to-r from-blue-400 to-blue-500 rounded-full progress-enhanced" 
-                     style={{ width: `${Math.min(currentQueueStatus.queue.processing * 20, 100)}%` }} />
+                     style={{ width: `${Math.min(queueStatus.queue.processing * 20, 100)}%` }} />
               </div>
             </CardContent>
           </Card>
@@ -447,14 +463,14 @@ export function QueueOverviewNew() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-green-600 mb-1 group-hover:scale-110 transition-transform duration-300">
-                {currentQueueStatus.queue.completed24h}
+                {queueStatus.queue.completed24h}
               </div>
               <p className="text-xs text-muted-foreground">
                 Completed in last 24 hours
               </p>
               <div className="mt-2 h-1 bg-green-100 rounded-full overflow-hidden">
                 <div className="h-full bg-gradient-to-r from-green-400 to-green-500 rounded-full" 
-                     style={{ width: `${Math.min(currentQueueStatus.queue.completed24h * 5, 100)}%` }} />
+                     style={{ width: `${Math.min(queueStatus.queue.completed24h * 5, 100)}%` }} />
               </div>
             </CardContent>
           </Card>
@@ -468,14 +484,14 @@ export function QueueOverviewNew() {
             </CardHeader>
             <CardContent>
               <div className="text-3xl font-bold text-red-600 mb-1 group-hover:scale-110 transition-transform duration-300">
-                {currentQueueStatus.queue.failed24h}
+                {queueStatus.queue.failed24h}
               </div>
               <p className="text-xs text-muted-foreground">
                 Failed in last 24 hours
               </p>
               <div className="mt-2 h-1 bg-red-100 rounded-full overflow-hidden">
                 <div className="h-full bg-gradient-to-r from-red-400 to-red-500 rounded-full" 
-                     style={{ width: `${Math.min(currentQueueStatus.queue.failed24h * 10, 100)}%` }} />
+                     style={{ width: `${Math.min(queueStatus.queue.failed24h * 10, 100)}%` }} />
               </div>
             </CardContent>
           </Card>
@@ -483,7 +499,7 @@ export function QueueOverviewNew() {
       )}
 
       {/* Enhanced Active Processing Tasks */}
-      {currentQueueStatus && currentQueueStatus.queue.processingTasks.length > 0 && (
+      {queueStatus && queueStatus.queue.processingTasks.length > 0 && (
         <Card className="card-enhanced animate-slide-up">
           <CardHeader className="border-b border-border/50 bg-gradient-to-r from-blue-50/50 to-purple-50/50">
             <div className="flex items-center gap-3">
@@ -500,7 +516,7 @@ export function QueueOverviewNew() {
           </CardHeader>
           <CardContent className="p-6">
             <div className="space-y-6">
-              {currentQueueStatus.queue.processingTasks.map((task: QueueTask, index: number) => (
+              {queueStatus.queue.processingTasks.map((task: QueueTask, index: number) => (
                 <div 
                   key={task.id} 
                   className="relative p-5 border border-border/60 rounded-xl bg-gradient-to-br from-blue-50/30 to-white shadow-sm hover:shadow-md transition-all duration-300 animate-scale-in"
@@ -535,23 +551,41 @@ export function QueueOverviewNew() {
                       </div>
                     </div>
                     
-                    {task.progress !== null && task.progress !== undefined && (
-                      <div className="space-y-3">
-                        <div className="flex justify-between items-center text-sm">
-                          <span className="text-muted-foreground">Progress</span>
-                          <span className="font-medium text-blue-600">{Math.round(task.progress * 100)}%</span>
-                        </div>
-                        <div className="relative">
-                          <Progress 
-                            value={task.progress * 100} 
-                            className="h-3 progress-enhanced bg-blue-100/50" 
-                          />
-                          <div 
-                            className="absolute top-0 left-0 h-3 bg-gradient-to-r from-blue-400 to-blue-500 rounded-full transition-all duration-300 progress-glow"
-                            style={{ width: `${task.progress * 100}%` }}
-                          />
-                        </div>
+                    {task.progress !== null && task.progress !== undefined && (                    <div className="space-y-3">
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-muted-foreground">Progress</span>
+                        <span className="font-medium text-blue-600">{Math.round(task.progress * 100)}%</span>
                       </div>
+                      <div className="relative">
+                        <Progress 
+                          value={task.progress * 100} 
+                          className="h-3 progress-enhanced bg-blue-100/50" 
+                        />
+                        <div 
+                          className="absolute top-0 left-0 h-3 bg-gradient-to-r from-blue-400 to-blue-500 rounded-full transition-all duration-300 progress-glow"
+                          style={{ width: `${task.progress * 100}%` }}
+                        />
+                      </div>
+                      
+                      {/* Timeout Warning */}
+                      {(() => {
+                        const timeoutStatus = getTaskTimeoutStatus(task)
+                        if (!timeoutStatus) return null
+                        
+                        const bgColor = timeoutStatus.level === 'error' ? 'bg-red-50/80 border-red-200/50' : 'bg-yellow-50/80 border-yellow-200/50'
+                        const textColor = timeoutStatus.level === 'error' ? 'text-red-700' : 'text-yellow-700'
+                        const iconColor = timeoutStatus.level === 'error' ? 'text-red-500' : 'text-yellow-500'
+                        
+                        return (
+                          <div className={`flex items-center gap-2 p-2 border rounded-lg ${bgColor} animate-fade-in mt-2`}>
+                            <AlertCircle className={`h-4 w-4 ${iconColor}`} />
+                            <span className={`text-xs ${textColor}`}>
+                              {timeoutStatus.message}
+                            </span>
+                          </div>
+                        )
+                      })()}
+                    </div>
                     )}
                     
                     <div className="flex items-center justify-between mt-4 pt-3 border-t border-border/40 text-xs text-muted-foreground">
@@ -577,7 +611,7 @@ export function QueueOverviewNew() {
       )}
 
       {/* Enhanced All Queue Tasks Table */}
-      {currentQueueTasks && (
+      {queueTasks && (
         <Card className="card-enhanced animate-slide-up">
           <CardHeader className="border-b border-border/50 bg-gradient-to-r from-slate-50/50 to-gray-50/50">
             <div className="flex items-center gap-3">
@@ -606,7 +640,7 @@ export function QueueOverviewNew() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {currentQueueTasks.tasks.length === 0 ? (
+                  {queueTasks.tasks.length === 0 ? (
                     <TableRow>
                       <TableCell colSpan={6} className="text-center py-12">
                         <div className="flex flex-col items-center gap-4 animate-fade-in">
@@ -621,7 +655,7 @@ export function QueueOverviewNew() {
                       </TableCell>
                     </TableRow>
                   ) : (
-                    currentQueueTasks.tasks.map((task: QueueTask, index: number) => (
+                    queueTasks.tasks.map((task: QueueTask, index: number) => (
                       <TableRow 
                         key={task.id} 
                         className="group hover:bg-muted/20 transition-all duration-200 animate-fade-in border-border/30"

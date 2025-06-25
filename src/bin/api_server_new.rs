@@ -120,6 +120,8 @@ async fn transcribe_handler(
     let mut backend: Option<String> = None;
     let mut priority: Option<i32> = None;
     let mut risk_analysis: Option<bool> = None;
+    let mut file_size_bytes: Option<u64> = None;
+    let mut duration_seconds: Option<f64> = None;
     let request_id = Uuid::new_v4().to_string();
     
     println!("📤 Processing transcription request: {}", request_id);
@@ -183,6 +185,26 @@ async fn transcribe_handler(
                         println!("   🛡️ Risk analysis: {:?}", risk_analysis);
                     }
                 }
+                "file_size_bytes" => {
+                    let mut bytes = Vec::new();
+                    while let Some(chunk) = field.try_next().await? {
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    if let Ok(size_str) = String::from_utf8(bytes) {
+                        file_size_bytes = size_str.parse().ok();
+                        println!("   📏 File size: {:?} bytes", file_size_bytes);
+                    }
+                }
+                "duration_seconds" => {
+                    let mut bytes = Vec::new();
+                    while let Some(chunk) = field.try_next().await? {
+                        bytes.extend_from_slice(&chunk);
+                    }
+                    if let Ok(duration_str) = String::from_utf8(bytes) {
+                        duration_seconds = duration_str.parse().ok();
+                        println!("   ⏱️ Duration: {:?} seconds", duration_seconds);
+                    }
+                }
                 _ => {
                     // Skip unknown fields
                     while let Some(_chunk) = field.try_next().await? {}
@@ -208,14 +230,29 @@ async fn transcribe_handler(
     
     println!("   🎯 Selected backend: {}", backend_str);
     
+    // Get actual file size if not provided
+    let actual_file_size = std::fs::metadata(temp_file.path())
+        .map(|m| m.len())
+        .unwrap_or(0);
+    let final_file_size = file_size_bytes.unwrap_or(actual_file_size);
+    
     // Prepare task payload
-    let task_payload = json!({
+    let mut task_payload = json!({
         "file_path": temp_path,
         "backend": backend_str,
         "language": language,
         "risk_analysis": risk_analysis.unwrap_or(false),
-        "request_id": request_id
+        "request_id": request_id,
+        "file_size_bytes": final_file_size
     });
+    
+    if let Some(duration) = duration_seconds {
+        task_payload["duration_seconds"] = json!(duration);
+    }
+    
+    println!("   📊 Task metadata: {}MB, {}min", 
+             (final_file_size as f64 / 1024.0 / 1024.0), 
+             duration_seconds.unwrap_or(0.0) / 60.0);
     
     // Submit to queue
     let task_type = TaskType::Transcription;
