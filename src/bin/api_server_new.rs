@@ -54,6 +54,7 @@ struct AppState {
 
 // Request/response structures
 #[derive(serde::Deserialize)]
+#[allow(dead_code)] // Fields will be used in future implementations
 struct TranscribeRequest {
     language: Option<String>,
     backend: Option<String>, // "cpu", "gpu", "coreml", "auto"

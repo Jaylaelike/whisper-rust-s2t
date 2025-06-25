@@ -9,8 +9,8 @@ use tokio::sync::{Mutex, RwLock};
 use uuid::Uuid;
 use chrono::{DateTime, Utc};
 
-// Import the transcribe function from lib
-use crate::transcribe_audio_file as lib_transcribe_audio_file;
+// Import the transcribe function from lib.rs using crate root
+use crate::transcribe_audio_file;
 
 // Custom error type that is Send + Sync
 #[derive(Debug)]
@@ -525,7 +525,7 @@ impl TaskQueue {
         let file_path_owned = file_path.to_string();
         let backend_owned = backend.to_string();
         let language_owned = language.map(|s| s.to_string());
-        let queue_clone = self.clone();
+        let _queue_clone = self.clone(); // Prefix with underscore to suppress warning
         let task_id = task_result.id.clone();
         
         // Run transcription in a separate thread to avoid blocking the actor
@@ -533,7 +533,7 @@ impl TaskQueue {
             // Create a new Tokio runtime for this thread
             let rt = tokio::runtime::Runtime::new().unwrap();
             let result = rt.block_on(async {
-                lib_transcribe_audio_file(&file_path_owned, language_owned.as_deref(), &backend_owned).await
+                transcribe_audio_file(&file_path_owned, &backend_owned, language_owned.as_deref()).await
             });
             
             // Send result back
@@ -554,7 +554,7 @@ impl TaskQueue {
         self.broadcast_to_websockets(&progress_msg.to_string()).await;
 
         // Wait for result while periodically updating progress and allowing other tasks to run
-        let mut progress = 35.0f64;
+        let mut progress = 35.0f64; // Initial progress value
         
         // Dynamic timeout based on file size and estimated duration
         let file_size = payload.get("file_size_bytes")
@@ -635,7 +635,7 @@ impl TaskQueue {
                     
                     // Calculate progress based on time elapsed (smoother progression)
                     let time_progress = (elapsed_seconds as f64 / max_wait_time as f64) * 50.0; // 50% for time-based progress
-                    progress = (35.0 + time_progress).min(90.0);
+                    progress = (progress + time_progress).min(90.0); // Start from initial progress
                     
                     // Update progress every 10 seconds or at major milestones
                     if elapsed_seconds % 10 == 0 || progress as i32 % 15 == 0 {

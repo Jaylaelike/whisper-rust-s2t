@@ -19,12 +19,14 @@ const SAMPLE_RATE: u32 = 16000;
 
 // Audio data with sample rate information
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // May be used in future implementations
 struct AudioData {
     samples: Vec<f32>,
     sample_rate: u32,
     channels: u16,
 }
 
+#[allow(dead_code)] // May be used in future implementations
 impl AudioData {
     fn len(&self) -> usize {
         self.samples.len()
@@ -62,8 +64,8 @@ pub struct WhisperSegment {
 /// Transcribe an audio file and return the result in OpenAI Whisper format using real Whisper processing
 pub async fn transcribe_audio_file(
     audio_path: &str,
-    language: Option<&str>,
     backend: &str,
+    language: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let language = language.unwrap_or("th");
     
