@@ -401,7 +401,7 @@ fn simple_transcribe(
     Ok(segments)
 }
 
-// Risk detection function using LlamaEdge with simple string approach
+// Risk detection function using LlamaEdge with enhanced prompting and preprocessing
 async fn detect_text_risk(
     text: &str,
     _: &(),
@@ -409,16 +409,37 @@ async fn detect_text_risk(
     println!("🔍 Analyzing text for risk content...");
     println!("   - Text length: {} characters", text.len());
 
-    //Create a simple prompt for risk detection
-    // let prompt = format!(
-    //     "คุณเป็นผู้เชี่ยวชาญในการตรวจสอบเนื้อหาที่เสี่ยงต่อการทำผิดกฎหมาย โดยเฉพาะเรื่องการพนัน การลงทุนที่มีความเสี่ยงสูง และกิจกรรมผิดกฎหมายอื่นๆ\n\nประโยคเหล่านี้ มีข้อความที่เสี่ยงต่อการทำผิดกฎหมายหรือไม่\n\n```{}```\n\nตอบแค่เข้าข่าย 'ผิด' หรือ 'ไม่ผิด' เท่านั้น",
-    //     text
-    // );
+    // ENHANCED RISK DETECTION WITH CONTEXT PREPROCESSING
+    // ==================================================
+    // This function implements sophisticated risk detection for Thai content with:
+    // 1. Context preprocessing for short texts
+    // 2. Adaptive prompting based on content length
+    // 3. Step-by-step analysis framework
+    // 4. Enhanced confidence scoring
+    // 5. Robust error handling and fallback logic
 
+    // Preprocess text for better analysis
+    let processed_text = if text.len() < 50 {
+        // For very short texts, add more context to help the LLM
+        format!("ข้อความสั้น: \"{}\" (โปรดพิจารณาบริบทที่อาจไม่สมบูรณ์)", text.trim())
+    } else if text.len() < 200 {
+        // For medium texts, clean and structure
+        format!("ข้อความ: {}", text.trim())
+    } else {
+        // For long texts, take a representative sample if needed
+        let truncated = if text.len() > 2000 {
+            format!("{}... (ข้อความยาวถูกย่อ)", &text[..2000])
+        } else {
+            text.to_string()
+        };
+        format!("ข้อความยาว: {}", truncated.trim())
+    };
 
+    println!("   - Processed text length: {} characters", processed_text.len());
 
-let prompt: String = format!(
-    "วิเคราะห์เนื้อหาต่อไปนี้ทีละขั้นตอน:
+    // Create enhanced prompt with step-by-step analysis framework
+    let prompt = format!(
+        "วิเคราะห์เนื้อหาต่อไปนี้ทีละขั้นตอน:
 
 ```{}```
 
@@ -439,8 +460,8 @@ let prompt: String = format!(
 - หรือถ้าไม่มั่นใจให้ตอบ ไม่ผิด ไว้ก่อน
 
 คำตอบขั้นสุดท้าย (ตอบเพียงคำเดียว):",
-    text
-);
+        processed_text
+    );
 
     // Create simple message structure
     let messages = vec![serde_json::json!({
@@ -467,8 +488,7 @@ let prompt: String = format!(
                     "content": prompt
                 }
             ],
-            "model": "qwen",
-            "temperature": 0.1,
+            "temperature": 0.3,
             "max_tokens": 10,
             "stream": false
         }))
@@ -589,16 +609,95 @@ async fn transcribe_audio(
         .map_err(|e| ErrorBadRequest(format!("Failed to load audio: {}", e)))?;
 
     println!("   - Audio loaded: {} samples", audio_data.len());
+    
+    // DYNAMIC TIMEOUT HANDLING FOR LONG AUDIO FILES
+    // ===============================================
+    // This section implements sophisticated timeout handling that prevents premature
+    // termination of transcription tasks for long audio files. The system dynamically
+    // calculates timeouts based on audio duration to ensure reliable processing.
+    //
+    // Key features:
+    // 1. Audio duration estimation: Calculates audio length from sample count
+    // 2. Dynamic timeout calculation: Base time + proportional to audio duration
+    // 3. Async timeout with tokio: Non-blocking timeout handling using tokio::time::timeout
+    // 4. Background task execution: Uses spawn_blocking for CPU-intensive transcription
+    // 5. Comprehensive error handling: Distinguishes between timeout, task failure, and transcription errors
+    // 6. User-friendly error messages: Provides clear guidance for very long files
+    //
+    // Timeout formula: max(5 minutes, min(30 minutes, 2 + 1.5 * audio_duration_minutes))
+    // This ensures reasonable timeouts for all audio lengths while preventing infinite waits.
+    
+    // Calculate estimated processing time based on audio length
+    let audio_duration_seconds = audio_data.len() as f64 / 16000.0; // 16kHz sample rate
+    let audio_duration_minutes = audio_duration_seconds / 60.0;
+    
+    println!("   - Audio duration: {:.2} minutes", audio_duration_minutes);
+    
+    // Dynamic timeout calculation: Base 2 minutes + 1.5x audio duration + safety margin
+    let estimated_processing_time = (audio_duration_minutes * 1.5) + 2.0; // minutes
+    let timeout_minutes = estimated_processing_time.max(5.0).min(30.0); // Min 5 min, Max 30 min
+    
+    println!("   - Estimated processing timeout: {:.1} minutes", timeout_minutes);
 
-    // Perform transcription (simplified - no chunking for now)
-    println!("   - Using single-pass transcription");
-    let segments = simple_transcribe(&whisper_ctx, audio_data, language)
-        .map_err(|e| ErrorBadRequest(format!("Transcription failed: {}", e)))?;
+    // Perform transcription with dynamic timeout
+    println!("   - Starting transcription with extended timeout for long audio...");
+    
+    let transcription_start = std::time::Instant::now();
+    
+    // Use tokio::time::timeout for async timeout handling
+    let timeout_duration = std::time::Duration::from_secs((timeout_minutes * 60.0) as u64);
+    
+    let segments = match tokio::time::timeout(
+        timeout_duration,
+        tokio::task::spawn_blocking({
+            let whisper_ctx = whisper_ctx.clone();
+            let audio_data = audio_data.clone();
+            let language = language.to_string();
+            move || {
+                // Wrapper to convert error to Send-safe String
+                simple_transcribe(&whisper_ctx, audio_data, &language)
+                    .map_err(|e| e.to_string())
+            }
+        })
+    ).await {
+        Ok(join_result) => {
+            match join_result {
+                Ok(transcription_result) => {
+                    match transcription_result {
+                        Ok(segments) => {
+                            let processing_time = transcription_start.elapsed();
+                            println!(
+                                "   ✅ Transcription completed in {:.1} seconds", 
+                                processing_time.as_secs_f64()
+                            );
+                            segments
+                        },
+                        Err(e) => {
+                            return Err(ErrorBadRequest(format!("Transcription failed: {}", e)));
+                        }
+                    }
+                },
+                Err(e) => {
+                    return Err(ErrorBadRequest(format!("Task execution failed: {}", e)));
+                }
+            }
+        },
+        Err(_) => {
+            let processing_time = transcription_start.elapsed();
+            let error_msg = format!(
+                "Transcription timed out after {:.1} minutes. Audio duration: {:.1} minutes. Consider using chunking for very long audio files.",
+                processing_time.as_secs_f64() / 60.0,
+                audio_duration_minutes
+            );
+            println!("   ❌ {}", error_msg);
+            return Err(ErrorBadRequest(error_msg));
+        }
+    };
 
     // Create result in OpenAI Whisper format
     let full_text = segments
         .iter()
-        .map(|s| s.text.trim())
+        .map(|segment| segment.text.trim())
         .filter(|s| !s.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
